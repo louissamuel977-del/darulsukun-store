@@ -105,44 +105,34 @@ function initFirebase(){
       return;
     }
     firebase.initializeApp(firebaseConfig);
+    fbRef = firebase.database().ref("dus_store");
+    FIREBASE_ENABLED = true;
     setSyncStatus("connecting");
 
-    firebase.auth().signInAnonymously().catch(err=>{
-      console.error("Firebase auth failed:", err);
-      setSyncStatus("offline-only");
-    });
-
-    firebase.auth().onAuthStateChanged(user=>{
-      if(!user) return; // not yet authenticated — wait
-      if(fbRef) return; // already wired up
-      fbRef = firebase.database().ref("dus_store");
-      FIREBASE_ENABLED = true;
-
-      fbRef.once("value").then(snap=>{
-        const remote = snap.val();
-        if(!remote){
-          fbRef.set(DB);
-        } else {
-          DB = sanitizeDB(remote);
-          localStorage.setItem(DB_KEY, JSON.stringify(DB));
-        }
-        setSyncStatus("online");
-        if(CURRENT_USER) goTo(currentPage);
-      });
-
-      fbRef.on("value", snap=>{
-        if(SUPPRESS_NEXT_REMOTE){ SUPPRESS_NEXT_REMOTE = false; return; }
-        const remote = snap.val();
-        if(!remote) return;
+    fbRef.once("value").then(snap=>{
+      const remote = snap.val();
+      if(!remote){
+        fbRef.set(DB);
+      } else {
         DB = sanitizeDB(remote);
         localStorage.setItem(DB_KEY, JSON.stringify(DB));
-        setSyncStatus("online");
-        if(CURRENT_USER) goTo(currentPage);
-      });
+      }
+      setSyncStatus("online");
+      if(CURRENT_USER) goTo(currentPage);
+    });
 
-      firebase.database().ref(".info/connected").on("value", snap=>{
-        if(FIREBASE_ENABLED) setSyncStatus(snap.val() ? "online" : "reconnecting");
-      });
+    fbRef.on("value", snap=>{
+      if(SUPPRESS_NEXT_REMOTE){ SUPPRESS_NEXT_REMOTE = false; return; }
+      const remote = snap.val();
+      if(!remote) return;
+      DB = sanitizeDB(remote);
+      localStorage.setItem(DB_KEY, JSON.stringify(DB));
+      setSyncStatus("online");
+      if(CURRENT_USER) goTo(currentPage);
+    });
+
+    firebase.database().ref(".info/connected").on("value", snap=>{
+      if(FIREBASE_ENABLED) setSyncStatus(snap.val() ? "online" : "reconnecting");
     });
   }catch(err){
     console.error("Firebase init failed:", err);
