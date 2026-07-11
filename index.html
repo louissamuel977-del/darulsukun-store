@@ -323,26 +323,18 @@ tbody tr:last-child td{border-bottom:none;}
     <p class="login-sub">Sign in to manage inventory, incoming stock, and issuance records.</p>
 
     <div class="field">
-      <label>Role</label>
-      <select id="loginRole">
-        <option value="admin">Admin</option>
-        <option value="storekeeper">Store Keeper</option>
-        <option value="supervisor">Supervisor</option>
-      </select>
+      <label>Username</label>
+      <input type="text" id="loginUsername" placeholder="e.g. louis.samuel">
     </div>
     <div class="field">
-      <label>Your Name</label>
-      <input type="text" id="loginName" placeholder="e.g. Louis Samuel">
-    </div>
-    <div class="field">
-      <label>Access Code</label>
-      <input type="password" id="loginPass" placeholder="Enter access code">
+      <label>Password</label>
+      <input type="password" id="loginPass" placeholder="Enter your password">
     </div>
     <button class="btn btn-gold" onclick="handleLogin()">Sign In</button>
 
     <div class="login-hint">
-      <b>Default codes:</b> Admin → <b>admin123</b> &nbsp;|&nbsp; Store Keeper → <b>store123</b> &nbsp;|&nbsp; Supervisor → <b>super123</b><br>
-      You can change these later in Settings.
+      <b>First time setup:</b> Username <b>admin</b>, Password <b>admin123</b><br>
+      Sign in as Admin, then go to Settings &rarr; User Accounts to create a personal login for each staff member.
     </div>
   </div>
 </div>
