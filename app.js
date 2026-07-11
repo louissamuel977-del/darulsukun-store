@@ -176,6 +176,21 @@ function logout(){
   document.getElementById("app").style.display = "none";
   document.getElementById("loginScreen").style.display = "flex";
 }
+function showForgotPassword(){
+  openModal(`
+    <div class="modal-head"><div class="modal-title">Forgot Password</div><button class="modal-close" onclick="closeModal()">&times;</button></div>
+    <p style="font-size:13.5px;color:var(--ink-dim);line-height:1.7;margin-bottom:14px;">
+      Passwords in this system are reset by your Admin — there is no email or SMS in this offline-friendly system, so nothing is sent automatically.
+    </p>
+    <p style="font-size:13.5px;color:var(--ink-dim);line-height:1.7;margin-bottom:14px;">
+      Ask your Admin to open <b>Settings &rarr; User Accounts</b>, find your name, and set a new password for you.
+    </p>
+    <p style="font-size:13.5px;color:var(--ink-dim);line-height:1.7;">
+      If you are the only Admin and are locked out, contact Nexora Digital Marketing Agency for assistance.
+    </p>
+    <div class="form-actions"><button class="btn btn-ghost" onclick="closeModal()">Close</button></div>
+  `);
+}
 function enterApp(){
   document.getElementById("loginScreen").style.display = "none";
   document.getElementById("app").style.display = "block";
