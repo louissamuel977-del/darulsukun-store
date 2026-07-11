@@ -42,6 +42,42 @@ function defaultDB(){
   };
 }
 
+/* Guards against Firebase Realtime Database quirks: it drops empty arrays/objects
+   entirely on save, and can convert sparse arrays into keyed objects on read.
+   This normalizes any loaded data back into the shape the app expects, so a
+   round-trip through Firebase (or a partial/corrupt localStorage value) can
+   never crash the app. */
+function toArray(val){
+  if(Array.isArray(val)) return val.filter(x => x !== null && x !== undefined);
+  if(val && typeof val === "object") return Object.values(val).filter(x => x !== null && x !== undefined);
+  return [];
+}
+function sanitizeDB(raw){
+  const base = defaultDB();
+  if(!raw || typeof raw !== "object") return base;
+  const db = {
+    users: toArray(raw.users).length ? toArray(raw.users) : base.users,
+    departments: toArray(raw.departments).length ? toArray(raw.departments) : base.departments,
+    items: toArray(raw.items),
+    incoming: toArray(raw.incoming),
+    outgoing: toArray(raw.outgoing),
+    seq: (raw.seq && typeof raw.seq === "object") ? {
+      item: Number(raw.seq.item)||0,
+      incoming: Number(raw.seq.incoming)||0,
+      outgoing: Number(raw.seq.outgoing)||0
+    } : base.seq
+  };
+  // Drop any item/entry that isn't a valid object, and fix unknown categories
+  // instead of letting a bad record crash every page that reads it.
+  db.items = db.items.filter(it => it && typeof it === "object" && it.id).map(it => ({
+    ...it,
+    category: CATS[it.category] ? it.category : "household"
+  }));
+  db.incoming = db.incoming.filter(r => r && typeof r === "object" && r.id);
+  db.outgoing = db.outgoing.filter(r => r && typeof r === "object" && r.id);
+  return db;
+}
+
 function loadDB(){
   let raw = localStorage.getItem(DB_KEY);
   if(!raw){
@@ -49,7 +85,7 @@ function loadDB(){
     localStorage.setItem(DB_KEY, JSON.stringify(db));
     return db;
   }
-  try{ return JSON.parse(raw); }catch(e){ return defaultDB(); }
+  try{ return sanitizeDB(JSON.parse(raw)); }catch(e){ return defaultDB(); }
 }
 function saveDB(db){
   localStorage.setItem(DB_KEY, JSON.stringify(db)); // always cache locally (offline safety)
@@ -80,7 +116,7 @@ function initFirebase(){
       if(!remote){
         fbRef.set(DB);
       } else {
-        DB = remote;
+        DB = sanitizeDB(remote);
         localStorage.setItem(DB_KEY, JSON.stringify(DB));
       }
       setSyncStatus("online");
@@ -91,7 +127,7 @@ function initFirebase(){
       if(SUPPRESS_NEXT_REMOTE){ SUPPRESS_NEXT_REMOTE = false; return; }
       const remote = snap.val();
       if(!remote) return;
-      DB = remote;
+      DB = sanitizeDB(remote);
       localStorage.setItem(DB_KEY, JSON.stringify(DB));
       setSyncStatus("online");
       if(CURRENT_USER) goTo(currentPage);
@@ -184,7 +220,21 @@ function goTo(page){
     departments: renderDepartments,
     settings: renderSettings
   };
-  (map[page] || renderDashboard)();
+  try{
+    (map[page] || renderDashboard)();
+  }catch(err){
+    console.error("Render error on page:", page, err);
+    document.getElementById("mainContent").innerHTML = `
+      ${topbarHtml("Something went wrong","This page hit an unexpected error")}
+      <div class="panel">
+        <p style="color:var(--ink-dim);font-size:13.5px;line-height:1.6;margin-bottom:14px;">
+          The app recovered from an error and your data is safe. Try refreshing the page.
+          If this keeps happening, open Settings and export a backup, then let Louis know.
+        </p>
+        <div style="font-family:var(--font-mono);font-size:11.5px;color:var(--ink-faint);background:var(--purple-950);padding:10px;border-radius:6px;">${escHtml(err.message)}</div>
+        <div class="form-actions"><button class="btn btn-gold btn-sm" onclick="location.reload()">Refresh Page</button></div>
+      </div>`;
+  }
 }
 
 /* ---------------- HELPERS ---------------- */
