@@ -30,9 +30,7 @@ const ICONS = {
 function defaultDB(){
   return {
     users: [
-      { username: "admin", name: "Administrator", role: "admin", pass: "admin123" },
-      { username: "storekeeper", name: "Store Keeper", role: "storekeeper", pass: "store123" },
-      { username: "supervisor", name: "Supervisor", role: "supervisor", pass: "super123" }
+      { username: "admin", name: "Administrator", role: "admin", pass: "admin123" }
     ],
     departments: ["Special Children Section","Kitchen / Dastarkhwan","Medical Room","Admin Office","Boys Hostel","Girls Hostel","Laundry","Maintenance"],
     items: [],
@@ -161,15 +159,14 @@ initFirebase();
 
 /* ---------------- AUTH ---------------- */
 function handleLogin(){
-  const role = document.getElementById("loginRole").value;
-  const name = document.getElementById("loginName").value.trim();
+  const username = document.getElementById("loginUsername").value.trim().toLowerCase();
   const pass = document.getElementById("loginPass").value;
 
-  if(!name){ toast("Please enter your name", true); return; }
-  const acct = DB.users.find(u => u.role === role);
-  if(!acct || acct.pass !== pass){ toast("Incorrect access code", true); return; }
+  if(!username){ toast("Please enter your username", true); return; }
+  const acct = DB.users.find(u => u.username.toLowerCase() === username);
+  if(!acct || acct.pass !== pass){ toast("Incorrect username or password", true); return; }
 
-  CURRENT_USER = { name, role, username: acct.username };
+  CURRENT_USER = { name: acct.name, role: acct.role, username: acct.username };
   sessionStorage.setItem("dus_session", JSON.stringify(CURRENT_USER));
   enterApp();
 }
@@ -990,16 +987,22 @@ function renderSettings(){
       </div>
       ${isAdmin()?`
       <div class="panel">
-        <div class="panel-title" style="margin-bottom:14px;">Access Codes</div>
-        ${DB.users.map(u=>`
-          <div class="field" style="margin-bottom:12px;">
-            <label>${u.role.replace('storekeeper','Store Keeper').replace('admin','Admin').replace('supervisor','Supervisor')} Code</label>
-            <div style="display:flex;gap:8px;">
-              <input type="text" id="pass_${u.username}" value="${escHtml(u.pass)}">
-              <button class="btn btn-ghost btn-sm" onclick="updatePass('${u.username}')">Save</button>
-            </div>
-          </div>
-        `).join("")}
+        <div class="panel-head">
+          <div class="panel-title">User Accounts <span class="count">${DB.users.length}</span></div>
+          <button class="btn btn-gold btn-sm" onclick="openUserForm()">${ICONS.plus}Add User</button>
+        </div>
+        <div class="table-wrap"><table><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Actions</th></tr></thead>
+        <tbody>
+          ${DB.users.map(u=>`<tr>
+            <td><b>${escHtml(u.name)}</b></td>
+            <td class="mono">${escHtml(u.username)}</td>
+            <td><span class="badge badge-ok">${u.role.replace('storekeeper','Store Keeper').replace('admin','Admin').replace('supervisor','Supervisor')}</span></td>
+            <td class="row-actions">
+              <button class="icon-btn" onclick="openUserForm('${u.username}')">${ICONS.edit}</button>
+              ${u.username!==CURRENT_USER.username?`<button class="icon-btn" onclick="deleteUser('${u.username}')">${ICONS.trash}</button>`:''}
+            </td>
+          </tr>`).join("")}
+        </tbody></table></div>
       </div>` : ""}
     </div>
     ${isAdmin()?`
@@ -1010,13 +1013,65 @@ function renderSettings(){
     </div>` : ""}
   `;
 }
-function updatePass(username){
-  const val = document.getElementById("pass_"+username).value.trim();
-  if(!val){ toast("Code cannot be empty", true); return; }
-  const u = DB.users.find(x=>x.username===username);
-  u.pass = val;
+function openUserForm(username){
+  const user = username ? DB.users.find(u=>u.username===username) : null;
+  openModal(`
+    <div class="modal-head"><div class="modal-title">${user?'Edit User':'Add New User'}</div><button class="modal-close" onclick="closeModal()">&times;</button></div>
+    <div class="field" style="margin-bottom:14px;"><label>Full Name</label>
+      <input type="text" id="u_name" value="${user?escHtml(user.name):''}" placeholder="e.g. Ali Raza"></div>
+    <div class="field" style="margin-bottom:14px;"><label>Username</label>
+      <input type="text" id="u_username" value="${user?escHtml(user.username):''}" placeholder="e.g. ali.raza" ${user?'disabled':''}></div>
+    <div class="form-grid" style="margin-bottom:14px;">
+      <div class="field"><label>Role</label>
+        <select id="u_role">
+          <option value="admin" ${user&&user.role==='admin'?'selected':''}>Admin</option>
+          <option value="storekeeper" ${user&&user.role==='storekeeper'?'selected':''}>Store Keeper</option>
+          <option value="supervisor" ${user&&user.role==='supervisor'?'selected':''}>Supervisor</option>
+        </select>
+      </div>
+      <div class="field"><label>${user?'New Password (leave blank to keep current)':'Password'}</label>
+        <input type="text" id="u_pass" placeholder="${user?'••••••':'Set a password'}"></div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-gold" onclick="saveUser('${username||''}')">Save User</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+    </div>
+  `);
+}
+function saveUser(existingUsername){
+  const name = document.getElementById("u_name").value.trim();
+  const username = document.getElementById("u_username").value.trim().toLowerCase();
+  const role = document.getElementById("u_role").value;
+  const pass = document.getElementById("u_pass").value;
+
+  if(!name){ toast("Full name is required", true); return; }
+  if(!username){ toast("Username is required", true); return; }
+  if(!/^[a-z0-9._-]+$/.test(username)){ toast("Username: letters, numbers, dots, dashes only", true); return; }
+
+  if(existingUsername){
+    const user = DB.users.find(u=>u.username===existingUsername);
+    user.name = name; user.role = role;
+    if(pass) user.pass = pass;
+    toast("User updated");
+  } else {
+    if(DB.users.some(u=>u.username===username)){ toast("Username already exists", true); return; }
+    if(!pass){ toast("Password is required for a new user", true); return; }
+    DB.users.push({ username, name, role, pass });
+    toast("User created");
+  }
   saveDB(DB);
-  toast("Access code updated");
+  closeModal();
+  renderSettings();
+}
+function deleteUser(username){
+  if(DB.users.filter(u=>u.role==='admin').length<=1 && DB.users.find(u=>u.username===username)?.role==='admin'){
+    toast("Cannot delete the last Admin account", true); return;
+  }
+  if(!confirm("Delete this user account?")) return;
+  DB.users = DB.users.filter(u=>u.username!==username);
+  saveDB(DB);
+  toast("User deleted");
+  renderSettings();
 }
 function exportBackup(){
   const blob = new Blob([JSON.stringify(DB,null,2)], {type:"application/json"});
