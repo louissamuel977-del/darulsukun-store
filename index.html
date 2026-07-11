@@ -302,11 +302,32 @@ tbody tr:last-child td{border-bottom:none;}
 .text-dim{color:var(--ink-dim);}
 .mono{font-family:var(--font-mono);}
 .mobile-toggle{display:none;}
+.print-only-header{display:none;}
 @media(max-width:900px){
   .sidebar{position:fixed;left:-260px;z-index:90;transition:left .2s;box-shadow:0 0 40px rgba(0,0,0,0.5);}
   .sidebar.open{left:0;}
   .mobile-toggle{display:flex;}
   .main{padding:20px 16px 60px;}
+}
+@media print{
+  .sidebar, .mobile-toggle, .topbar-actions, #modalOverlay, #toastHost, .filter-bar{display:none !important;}
+  body{background:#fff !important;}
+  .main{padding:0 !important;}
+  .print-only-header{
+    display:flex !important;align-items:center;gap:16px;margin-bottom:24px;
+    border-bottom:3px solid #B8860B;padding-bottom:14px;
+  }
+  .print-only-header img{width:56px;height:56px;border-radius:50%;}
+  .print-title{font-family:var(--font-display);font-size:19px;font-weight:800;color:#000;}
+  .print-sub{font-size:11px;color:#555;margin-top:2px;}
+  .page-title{color:#000 !important;}
+  .page-sub{color:#333 !important;}
+  .panel, .stat-card{background:#fff !important;border:1px solid #999 !important;box-shadow:none !important;}
+  .panel-title{color:#000 !important;}
+  thead th{color:#333 !important;border-bottom:1px solid #000 !important;}
+  tbody td{color:#000 !important;border-bottom:1px solid #ccc !important;}
+  .value, .label, .delta{color:#000 !important;}
+  .badge{border:1px solid #999;}
 }
 </style>
 </head>
@@ -316,7 +337,7 @@ tbody tr:last-child td{border-bottom:none;}
 <div id="loginScreen">
   <div class="login-card">
     <div class="brand-mark">
-      <span class="brand-dot"></span>
+      <img src="logo.jpg" alt="Dar-ul-Sukun" style="width:38px;height:38px;border-radius:50%;flex-shrink:0;">
       <span class="brand-eyebrow">Nexora Store System</span>
     </div>
     <h1 class="login-title">Dar-ul-Sukun<br>Head Office Store</h1>
@@ -331,6 +352,9 @@ tbody tr:last-child td{border-bottom:none;}
       <input type="password" id="loginPass" placeholder="Enter your password">
     </div>
     <button class="btn btn-gold" onclick="handleLogin()">Sign In</button>
+    <div style="text-align:center;margin-top:14px;">
+      <a href="#" onclick="showForgotPassword();return false;" style="color:var(--ink-faint);font-size:12.5px;text-decoration:underline;">Forgot password?</a>
+    </div>
 
     <div class="login-hint">
       <b>First time setup:</b> Username <b>admin</b>, Password <b>admin123</b><br>
@@ -344,7 +368,7 @@ tbody tr:last-child td{border-bottom:none;}
   <div class="shell">
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
-        <div class="sidebar-brand"><span class="dot"></span>Dar-ul-Sukun Store</div>
+        <div class="sidebar-brand"><img src="logo.jpg" alt="Dar-ul-Sukun" style="width:22px;height:22px;border-radius:50%;">Dar-ul-Sukun Store</div>
         <div class="sidebar-sub">Head Office · Kashmir Road, Karachi</div>
         <div id="syncStatus" style="margin-top:10px;font-size:11px;display:flex;align-items:center;gap:6px;"></div>
       </div>
@@ -363,7 +387,16 @@ tbody tr:last-child td{border-bottom:none;}
       </div>
     </aside>
 
-    <main class="main" id="mainContent"></main>
+    <main class="main">
+      <div class="print-only-header">
+        <img src="logo.jpg" alt="Dar-ul-Sukun">
+        <div>
+          <div class="print-title">Dar-ul-Sukun Head Office Store</div>
+          <div class="print-sub">Store Management Record · Powered by Nexora Digital Marketing Agency</div>
+        </div>
+      </div>
+      <div id="mainContent"></div>
+    </main>
   </div>
 </div>
 
