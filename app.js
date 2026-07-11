@@ -206,8 +206,8 @@ if(CURRENT_USER){ window.addEventListener("DOMContentLoaded", enterApp); }
 const NAV_ITEMS = [
   { id:"dashboard", label:"Dashboard", icon:"dashboard" },
   { id:"items", label:"Item Master", icon:"items" },
-  { id:"incoming", label:"Incoming Entry", icon:"incoming" },
-  { id:"outgoing", label:"Outgoing Entry", icon:"outgoing" },
+  { id:"incoming", label:"Inward Entry", icon:"incoming" },
+  { id:"outgoing", label:"Outward Entry", icon:"outgoing" },
   { id:"reports", label:"Reports", icon:"reports" },
   { id:"departments", label:"Departments", icon:"departments" },
   { id:"settings", label:"Settings", icon:"settings" }
@@ -386,14 +386,14 @@ function renderDashboard(){
     </div>
     <div class="grid grid-2">
       <div class="panel">
-        <div class="panel-head"><div class="panel-title">Recent Incoming</div></div>
+        <div class="panel-head"><div class="panel-title">Recent Inward</div></div>
         ${recentIn.length===0?emptyState("No incoming entries yet."):`
         <div class="table-wrap"><table><thead><tr><th>Date</th><th>Item</th><th>Qty</th><th>Source</th></tr></thead><tbody>
         ${recentIn.map(r=>{const item=getItem(r.itemId);return `<tr><td>${fmtDate(r.date)}</td><td>${escHtml(item?item.name:'-')}</td><td>${r.qty}</td><td><span class="badge ${r.sourceType==='Donation'?'badge-ok':'badge-warn'}">${r.sourceType}</span></td></tr>`}).join("")}
         </tbody></table></div>`}
       </div>
       <div class="panel">
-        <div class="panel-head"><div class="panel-title">Recent Outgoing</div></div>
+        <div class="panel-head"><div class="panel-title">Recent Outward</div></div>
         ${recentOut.length===0?emptyState("No outgoing entries yet."):`
         <div class="table-wrap"><table><thead><tr><th>Date</th><th>Item</th><th>Qty</th><th>Department</th></tr></thead><tbody>
         ${recentOut.map(r=>{const item=getItem(r.itemId);return `<tr><td>${fmtDate(r.date)}</td><td>${escHtml(item?item.name:'-')}</td><td>${r.qty}</td><td>${escHtml(r.department)}</td></tr>`}).join("")}
@@ -532,7 +532,7 @@ let incomingFilter = { cat:"", source:"", from:"", to:"" };
 function renderIncoming(){
   const main = document.getElementById("mainContent");
   main.innerHTML = `
-    ${topbarHtml("Incoming Entry","Record purchases and donations received", canEdit()?`<button class="btn btn-gold btn-sm" onclick="openIncomingForm()">${ICONS.plus}New Incoming Entry</button>`:"")}
+    ${topbarHtml("Inward Entry","Record purchases and donations received", canEdit()?`<button class="btn btn-gold btn-sm" onclick="openIncomingForm()">${ICONS.plus}New Inward Entry</button>`:"")}
     <div class="panel">
       <div class="filter-bar">
         <div class="field"><label>Category</label>
@@ -601,7 +601,7 @@ function itemOptions(selectedId){
 function openIncomingForm(id){
   const row = id ? DB.incoming.find(r=>r.id===id) : null;
   openModal(`
-    <div class="modal-head"><div class="modal-title">${row?'Edit Incoming Entry':'New Incoming Entry'}</div><button class="modal-close" onclick="closeModal()">&times;</button></div>
+    <div class="modal-head"><div class="modal-title">${row?'Edit Inward Entry':'New Inward Entry'}</div><button class="modal-close" onclick="closeModal()">&times;</button></div>
     <div class="form-grid" style="margin-bottom:14px;">
       <div class="field"><label>Date</label><input type="date" id="f_date" value="${row?row.date:todayStr()}"></div>
       <div class="field"><label>Source Type</label>
@@ -665,11 +665,11 @@ function saveIncoming(id){
   if(id){
     const row = DB.incoming.find(r=>r.id===id);
     Object.assign(row, data);
-    toast("Incoming entry updated");
+    toast("Inward entry updated");
   } else {
     uid("incoming");
     DB.incoming.push({ id:"in_"+Date.now(), ...data });
-    toast("Incoming entry saved");
+    toast("Inward entry saved");
   }
   saveDB(DB);
   closeModal();
@@ -690,7 +690,7 @@ let outgoingFilter = { dept:"", from:"", to:"" };
 function renderOutgoing(){
   const main = document.getElementById("mainContent");
   main.innerHTML = `
-    ${topbarHtml("Outgoing Entry","Record items issued to departments", canEdit()?`<button class="btn btn-gold btn-sm" onclick="openOutgoingForm()">${ICONS.plus}New Outgoing Entry</button>`:"")}
+    ${topbarHtml("Outward Entry","Record items issued to departments", canEdit()?`<button class="btn btn-gold btn-sm" onclick="openOutgoingForm()">${ICONS.plus}New Outward Entry</button>`:"")}
     <div class="panel">
       <div class="filter-bar">
         <div class="field"><label>Department</label>
@@ -739,7 +739,7 @@ function outgoingRows(){
 function openOutgoingForm(id){
   const row = id ? DB.outgoing.find(r=>r.id===id) : null;
   openModal(`
-    <div class="modal-head"><div class="modal-title">${row?'Edit Outgoing Entry':'New Outgoing Entry'}</div><button class="modal-close" onclick="closeModal()">&times;</button></div>
+    <div class="modal-head"><div class="modal-title">${row?'Edit Outward Entry':'New Outward Entry'}</div><button class="modal-close" onclick="closeModal()">&times;</button></div>
     <div class="form-grid" style="margin-bottom:14px;">
       <div class="field"><label>Date</label><input type="date" id="f_date" value="${row?row.date:todayStr()}"></div>
       <div class="field" style="grid-column:span 2;"><label>Item</label>
@@ -803,11 +803,11 @@ function saveOutgoing(id){
   if(id){
     const row = DB.outgoing.find(r=>r.id===id);
     Object.assign(row, data);
-    toast("Outgoing entry updated");
+    toast("Outward entry updated");
   } else {
     uid("outgoing");
     DB.outgoing.push({ id:"out_"+Date.now(), ...data });
-    toast("Outgoing entry saved");
+    toast("Outward entry saved");
   }
   saveDB(DB);
   closeModal();
@@ -860,10 +860,10 @@ function buildReport(){
     const inc = DB.incoming.filter(r=>inRange(r.date));
     const out = DB.outgoing.filter(r=>inRange(r.date));
     return `
-      <div class="panel-title" style="margin-bottom:10px;">Incoming (${inc.length})</div>
+      <div class="panel-title" style="margin-bottom:10px;">Inward (${inc.length})</div>
       <div class="table-wrap"><table><thead><tr><th>Date</th><th>Item</th><th>Source</th><th>Qty</th><th>Total</th></tr></thead>
       <tbody>${inc.length?inc.map(r=>`<tr><td>${fmtDate(r.date)}</td><td>${escHtml(getItem(r.itemId)?.name||'-')}</td><td>${r.sourceType}</td><td>${r.qty}</td><td>${fmtMoney(r.total)}</td></tr>`).join(""):`<tr><td colspan="5">${emptyState("No records")}</td></tr>`}</tbody></table></div>
-      <div class="panel-title" style="margin:18px 0 10px;">Outgoing (${out.length})</div>
+      <div class="panel-title" style="margin:18px 0 10px;">Outward (${out.length})</div>
       <div class="table-wrap"><table><thead><tr><th>Date</th><th>Item</th><th>Qty</th><th>Department</th><th>Receiver</th></tr></thead>
       <tbody>${out.length?out.map(r=>`<tr><td>${fmtDate(r.date)}</td><td>${escHtml(getItem(r.itemId)?.name||'-')}</td><td>${r.qty}</td><td>${escHtml(r.department)}</td><td>${escHtml(r.receiverName)}</td></tr>`).join(""):`<tr><td colspan="5">${emptyState("No records")}</td></tr>`}</tbody></table></div>
     `;
@@ -954,7 +954,7 @@ function exportReport(){
 function renderDepartments(){
   const main = document.getElementById("mainContent");
   main.innerHTML = `
-    ${topbarHtml("Departments","Manage department list used in Outgoing Entry", isAdmin()?`<button class="btn btn-gold btn-sm" onclick="addDepartment()">${ICONS.plus}Add Department</button>`:"")}
+    ${topbarHtml("Departments","Manage department list used in Outward Entry", isAdmin()?`<button class="btn btn-gold btn-sm" onclick="addDepartment()">${ICONS.plus}Add Department</button>`:"")}
     <div class="panel">
       <div class="table-wrap"><table><thead><tr><th>Department Name</th>${isAdmin()?'<th>Actions</th>':''}</tr></thead>
       <tbody>
