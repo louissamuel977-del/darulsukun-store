@@ -440,7 +440,7 @@ function renderItems(){
       </div>
       <div class="table-wrap">
       <table>
-        <thead><tr><th>Code</th><th>Name</th><th>Category</th><th>Unit</th><th>Current Stock</th><th>Reorder Level</th><th>Status</th>${canEdit()?'<th>Actions</th>':''}</tr></thead>
+        <thead><tr><th>Code</th><th>Name</th><th>Category</th><th>Unit</th><th>Current Stock</th><th>Reorder Level</th><th>Status</th>${isAdmin()?'<th>Actions</th>':''}</tr></thead>
         <tbody>
           ${itemsRows()}
         </tbody>
@@ -466,7 +466,7 @@ function itemsRows(){
       <td class="mono">${stock}</td>
       <td class="mono">${it.reorderLevel}</td>
       <td>${low?'<span class="badge badge-danger">Low Stock</span>':'<span class="badge badge-ok">OK</span>'}</td>
-      ${canEdit()?`<td class="row-actions">
+      ${isAdmin()?`<td class="row-actions">
         <button class="icon-btn" onclick="openItemForm('${it.id}')">${ICONS.edit}</button>
         ${isAdmin()?`<button class="icon-btn" onclick="deleteItem('${it.id}')">${ICONS.trash}</button>`:''}
       </td>`:''}
@@ -553,7 +553,7 @@ function renderIncoming(){
       </div>
       <div class="table-wrap">
       <table>
-        <thead><tr><th>Date</th><th>Item</th><th>Category</th><th>Source</th><th>Donor/Vendor</th><th>Qty</th><th>Rate</th><th>Total</th><th>Expiry</th>${canEdit()?'<th>Actions</th>':''}</tr></thead>
+        <thead><tr><th>Date</th><th>Item</th><th>Category</th><th>Source</th><th>Donor/Vendor</th><th>Qty</th><th>Rate</th><th>Total</th><th>Expiry</th>${isAdmin()?'<th>Actions</th>':''}</tr></thead>
         <tbody>${incomingRows()}</tbody>
       </table>
       </div>
@@ -583,7 +583,7 @@ function incomingRows(){
       <td class="mono">${r.rate?fmtMoney(r.rate):'-'}</td>
       <td class="mono">${r.total?fmtMoney(r.total):'-'}</td>
       <td>${r.expiryDate?`${fmtDate(r.expiryDate)} ${d!==null&&d<=30?`<span class="badge ${d<=7?'badge-danger':'badge-warn'}">${d<0?'expired':d+'d'}</span>`:''}`:'—'}</td>
-      ${canEdit()?`<td class="row-actions">
+      ${isAdmin()?`<td class="row-actions">
         <button class="icon-btn" onclick="openIncomingForm('${r.id}')">${ICONS.edit}</button>
         ${isAdmin()?`<button class="icon-btn" onclick="deleteIncoming('${r.id}')">${ICONS.trash}</button>`:''}
       </td>`:''}
@@ -704,7 +704,7 @@ function renderOutgoing(){
       </div>
       <div class="table-wrap">
       <table>
-        <thead><tr><th>Date</th><th>Item</th><th>Qty</th><th>Department</th><th>Receiver</th><th>Approved By</th><th>Received</th>${canEdit()?'<th>Actions</th>':''}</tr></thead>
+        <thead><tr><th>Date</th><th>Item</th><th>Qty</th><th>Department</th><th>Receiver</th><th>Approved By</th><th>Received</th>${isAdmin()?'<th>Actions</th>':''}</tr></thead>
         <tbody>${outgoingRows()}</tbody>
       </table>
       </div>
@@ -729,7 +729,7 @@ function outgoingRows(){
       <td>${escHtml(r.receiverName)}</td>
       <td>${escHtml(r.approvedBy||'-')}</td>
       <td>${r.received?'<span class="badge badge-ok">Yes</span>':'<span class="badge badge-warn">Pending</span>'}</td>
-      ${canEdit()?`<td class="row-actions">
+      ${isAdmin()?`<td class="row-actions">
         <button class="icon-btn" onclick="openOutgoingForm('${r.id}')">${ICONS.edit}</button>
         ${isAdmin()?`<button class="icon-btn" onclick="deleteOutgoing('${r.id}')">${ICONS.trash}</button>`:''}
       </td>`:''}
