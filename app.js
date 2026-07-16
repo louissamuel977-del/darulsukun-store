@@ -612,12 +612,25 @@ function logDeletion(type, data){
   });
 }
 function deleteItem(id){
-  if(!confirm("Delete this item? This cannot be undone.")) return;
   const item = getItem(id);
+  const relatedIncoming = DB.incoming.filter(r=>r.itemId===id);
+  const relatedOutgoing = DB.outgoing.filter(r=>r.itemId===id);
+  const relatedCount = relatedIncoming.length + relatedOutgoing.length;
+
+  const msg = relatedCount>0
+    ? `Delete this item? It has ${relatedIncoming.length} inward and ${relatedOutgoing.length} outward record(s) — these will be deleted too. This cannot be undone.`
+    : "Delete this item? This cannot be undone.";
+  if(!confirm(msg)) return;
+
   if(item) logDeletion("item", item);
+  relatedIncoming.forEach(r=>logDeletion("incoming", r));
+  relatedOutgoing.forEach(r=>logDeletion("outgoing", r));
+
   DB.items = DB.items.filter(i=>i.id!==id);
+  DB.incoming = DB.incoming.filter(r=>r.itemId!==id);
+  DB.outgoing = DB.outgoing.filter(r=>r.itemId!==id);
   saveDB(DB);
-  toast("Item deleted");
+  toast(relatedCount>0 ? `Item and ${relatedCount} related record(s) deleted` : "Item deleted");
   renderItems();
 }
 
@@ -1376,6 +1389,15 @@ function renderSettings(){
       </div>` : ""}
     </div>
     ${isAdmin()?`
+    <div class="panel">
+      <div class="panel-title" style="margin-bottom:10px;">Data Cleanup</div>
+      <p class="text-dim" style="font-size:13px;margin-bottom:14px;line-height:1.6;">
+        If an item was deleted before entries were auto-cleaned (older records), leftover Inward/Outward
+        entries pointing to it can show as "-". This finds and removes those orphaned records.
+      </p>
+      <button class="btn btn-ghost btn-sm" onclick="cleanupOrphanedRecords()">Find & Remove Orphaned Records</button>
+    </div>` : ""}
+    ${isAdmin()?`
     <div class="panel" style="border-color:var(--danger);">
       <div class="panel-title" style="margin-bottom:10px;color:#F08A87;">Danger Zone</div>
       <p class="text-dim" style="font-size:13px;margin-bottom:14px;">Permanently erase all store data and start fresh. This cannot be undone — export a backup first.</p>
@@ -1468,6 +1490,23 @@ function importBackup(evt){
     }catch(err){ toast("Failed to read backup file", true); }
   };
   reader.readAsText(file);
+}
+function cleanupOrphanedRecords(){
+  const validItemIds = new Set(DB.items.map(i=>i.id));
+  const orphanedIncoming = DB.incoming.filter(r=>!validItemIds.has(r.itemId));
+  const orphanedOutgoing = DB.outgoing.filter(r=>!validItemIds.has(r.itemId));
+  const total = orphanedIncoming.length + orphanedOutgoing.length;
+
+  if(total===0){ toast("No orphaned records found — everything is clean"); return; }
+  if(!confirm(`Found ${orphanedIncoming.length} orphaned inward and ${orphanedOutgoing.length} orphaned outward record(s) pointing to deleted items. Remove them permanently?`)) return;
+
+  orphanedIncoming.forEach(r=>logDeletion("incoming", r));
+  orphanedOutgoing.forEach(r=>logDeletion("outgoing", r));
+  DB.incoming = DB.incoming.filter(r=>validItemIds.has(r.itemId));
+  DB.outgoing = DB.outgoing.filter(r=>validItemIds.has(r.itemId));
+  saveDB(DB);
+  toast(`${total} orphaned record(s) removed`);
+  renderSettings();
 }
 function resetAllData(){
   if(!confirm("This will delete ALL items, entries, and records permanently. Are you sure?")) return;
