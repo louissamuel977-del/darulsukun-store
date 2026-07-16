@@ -528,7 +528,7 @@ function deleteItem(id){
 /* ============================================================
    INCOMING ENTRY (Purchasing + Donations)
    ============================================================ */
-let incomingFilter = { cat:"", source:"", from:"", to:"" };
+let incomingFilter = { cat:"", source:"", from:"", to:"", q:"" };
 function renderIncoming(){
   const main = document.getElementById("mainContent");
   main.innerHTML = `
@@ -550,6 +550,7 @@ function renderIncoming(){
         </div>
         <div class="field"><label>From</label><input type="date" value="${incomingFilter.from}" onchange="incomingFilter.from=this.value;renderIncoming()"></div>
         <div class="field"><label>To</label><input type="date" value="${incomingFilter.to}" onchange="incomingFilter.to=this.value;renderIncoming()"></div>
+        <div class="field" style="flex:1;min-width:200px;"><label>Search</label><input type="text" placeholder="Search item or donor/vendor..." value="${escHtml(incomingFilter.q)}" oninput="incomingFilter.q=this.value;renderIncoming()"></div>
       </div>
       <div class="table-wrap">
       <table>
@@ -567,6 +568,12 @@ function incomingRows(){
     if(incomingFilter.source && r.sourceType!==incomingFilter.source) return false;
     if(incomingFilter.from && r.date < incomingFilter.from) return false;
     if(incomingFilter.to && r.date > incomingFilter.to) return false;
+    if(incomingFilter.q){
+      const q = incomingFilter.q.toLowerCase();
+      const matchesItem = item && item.name.toLowerCase().includes(q);
+      const matchesDonor = r.donorVendor && r.donorVendor.toLowerCase().includes(q);
+      if(!matchesItem && !matchesDonor) return false;
+    }
     return true;
   });
   if(list.length===0) return `<tr><td colspan="10">${emptyState("No incoming entries found.")}</td></tr>`;
@@ -686,7 +693,7 @@ function deleteIncoming(id){
 /* ============================================================
    OUTGOING ENTRY (Issuance)
    ============================================================ */
-let outgoingFilter = { dept:"", from:"", to:"" };
+let outgoingFilter = { dept:"", from:"", to:"", q:"" };
 function renderOutgoing(){
   const main = document.getElementById("mainContent");
   main.innerHTML = `
@@ -701,6 +708,7 @@ function renderOutgoing(){
         </div>
         <div class="field"><label>From</label><input type="date" value="${outgoingFilter.from}" onchange="outgoingFilter.from=this.value;renderOutgoing()"></div>
         <div class="field"><label>To</label><input type="date" value="${outgoingFilter.to}" onchange="outgoingFilter.to=this.value;renderOutgoing()"></div>
+        <div class="field" style="flex:1;min-width:200px;"><label>Search</label><input type="text" placeholder="Search item or receiver..." value="${escHtml(outgoingFilter.q)}" oninput="outgoingFilter.q=this.value;renderOutgoing()"></div>
       </div>
       <div class="table-wrap">
       <table>
@@ -716,6 +724,13 @@ function outgoingRows(){
     if(outgoingFilter.dept && r.department!==outgoingFilter.dept) return false;
     if(outgoingFilter.from && r.date < outgoingFilter.from) return false;
     if(outgoingFilter.to && r.date > outgoingFilter.to) return false;
+    if(outgoingFilter.q){
+      const q = outgoingFilter.q.toLowerCase();
+      const item = getItem(r.itemId);
+      const matchesItem = item && item.name.toLowerCase().includes(q);
+      const matchesReceiver = r.receiverName && r.receiverName.toLowerCase().includes(q);
+      if(!matchesItem && !matchesReceiver) return false;
+    }
     return true;
   });
   if(list.length===0) return `<tr><td colspan="8">${emptyState("No outgoing entries found.")}</td></tr>`;
@@ -951,14 +966,20 @@ function exportReport(){
 /* ============================================================
    DEPARTMENTS
    ============================================================ */
+let deptFilter = { q: "" };
 function renderDepartments(){
   const main = document.getElementById("mainContent");
+  const list = DB.departments.filter(d => !deptFilter.q || d.toLowerCase().includes(deptFilter.q.toLowerCase()));
   main.innerHTML = `
     ${topbarHtml("Departments","Manage department list used in Outward Entry", isAdmin()?`<button class="btn btn-gold btn-sm" onclick="addDepartment()">${ICONS.plus}Add Department</button>`:"")}
     <div class="panel">
+      <div class="filter-bar">
+        <div class="field" style="flex:1;"><label>Search</label><input type="text" placeholder="Search department..." value="${escHtml(deptFilter.q)}" oninput="deptFilter.q=this.value;renderDepartments()"></div>
+      </div>
       <div class="table-wrap"><table><thead><tr><th>Department Name</th>${isAdmin()?'<th>Actions</th>':''}</tr></thead>
       <tbody>
-        ${DB.departments.map((d,i)=>`<tr><td>${escHtml(d)}</td>${isAdmin()?`<td class="row-actions"><button class="icon-btn" onclick="removeDepartment(${i})">${ICONS.trash}</button></td>`:''}</tr>`).join("")}
+        ${list.length===0 ? `<tr><td colspan="2">${emptyState("No departments found.")}</td></tr>` :
+          list.map((d)=>{const i=DB.departments.indexOf(d);return `<tr><td>${escHtml(d)}</td>${isAdmin()?`<td class="row-actions"><button class="icon-btn" onclick="removeDepartment(${i})">${ICONS.trash}</button></td>`:''}</tr>`}).join("")}
       </tbody></table></div>
     </div>
   `;
