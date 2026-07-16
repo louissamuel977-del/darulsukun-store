@@ -871,15 +871,18 @@ function renderDiaperIssue(){
       </div>
       <div class="table-wrap">
       <table>
-        <thead><tr><th style="width:40px;">Issue</th><th>Room</th><th>Caregiver Name</th><th>Size</th><th>Qty</th></tr></thead>
+        <thead><tr><th style="width:40px;">Issue</th><th>Room</th><th>Caregiver Name</th><th>S Qty</th><th>M Qty</th><th>L Qty</th><th>XL Qty</th><th>Total</th></tr></thead>
         <tbody>
           ${DB.dormRooms.map((r,i)=>`
             <tr>
               <td><input type="checkbox" id="dp_tick_${i}" style="width:18px;height:18px;accent-color:var(--gold-500);cursor:pointer;"></td>
               <td>${canEdit()?`<input type="text" id="dp_room_${i}" value="${escHtml(r.name)}" style="width:120px;padding:6px 8px;">`:`<b>${escHtml(r.name)}</b>`}</td>
-              <td><input type="text" id="dp_caregiver_${i}" value="${escHtml(r.caregiver||'')}" placeholder="Caregiver name" style="width:170px;padding:6px 8px;"></td>
-              <td><select id="dp_size_${i}" style="width:80px;padding:6px 8px;">${DIAPER_SIZES.map(s=>`<option value="${s}" ${s==='M'?'selected':''}>${s}</option>`).join("")}</select></td>
-              <td><input type="number" id="dp_qty_${i}" value="1" min="1" style="width:70px;padding:6px 8px;"></td>
+              <td><input type="text" id="dp_caregiver_${i}" value="${escHtml(r.caregiver||'')}" placeholder="Caregiver name" style="width:150px;padding:6px 8px;"></td>
+              <td><input type="number" id="dp_qty_S_${i}" value="0" min="0" style="width:60px;padding:6px 8px;" oninput="updateDiaperRowTotal(${i})"></td>
+              <td><input type="number" id="dp_qty_M_${i}" value="0" min="0" style="width:60px;padding:6px 8px;" oninput="updateDiaperRowTotal(${i})"></td>
+              <td><input type="number" id="dp_qty_L_${i}" value="0" min="0" style="width:60px;padding:6px 8px;" oninput="updateDiaperRowTotal(${i})"></td>
+              <td><input type="number" id="dp_qty_XL_${i}" value="0" min="0" style="width:60px;padding:6px 8px;" oninput="updateDiaperRowTotal(${i})"></td>
+              <td class="mono" id="dp_total_${i}" style="font-weight:700;color:var(--gold-400);">0</td>
             </tr>`).join("")}
         </tbody>
       </table>
@@ -905,6 +908,13 @@ function todayDiaperRows(){
       return `<tr><td>${fmtDate(r.date)}</td><td>${escHtml(r.time||'-')}</td><td>${escHtml(r.department)}</td><td>${escHtml(r.receiverName)}</td><td><span class="badge badge-dp">${size}</span></td><td class="mono">${r.qty}</td></tr>`;
     }).join("")}</tbody></table></div>`;
 }
+function updateDiaperRowTotal(i){
+  const s = Number(document.getElementById(`dp_qty_S_${i}`).value)||0;
+  const m = Number(document.getElementById(`dp_qty_M_${i}`).value)||0;
+  const l = Number(document.getElementById(`dp_qty_L_${i}`).value)||0;
+  const xl = Number(document.getElementById(`dp_qty_XL_${i}`).value)||0;
+  document.getElementById(`dp_total_${i}`).textContent = s+m+l+xl;
+}
 function saveDiaperIssue(){
   const date = document.getElementById("dp_date").value || todayStr();
   const time = document.getElementById("dp_time").value || new Date().toTimeString().slice(0,5);
@@ -915,37 +925,46 @@ function saveDiaperIssue(){
     const roomNameInput = document.getElementById(`dp_room_${i}`);
     const roomName = roomNameInput ? roomNameInput.value.trim() : room.name;
     const caregiver = document.getElementById(`dp_caregiver_${i}`).value.trim();
-    const size = document.getElementById(`dp_size_${i}`).value;
-    const qty = Number(document.getElementById(`dp_qty_${i}`).value) || 0;
+    const sizeQtys = {
+      S: Number(document.getElementById(`dp_qty_S_${i}`).value)||0,
+      M: Number(document.getElementById(`dp_qty_M_${i}`).value)||0,
+      L: Number(document.getElementById(`dp_qty_L_${i}`).value)||0,
+      XL: Number(document.getElementById(`dp_qty_XL_${i}`).value)||0
+    };
 
     // Persist room name / caregiver edits either way, so they're pre-filled next time.
     room.name = roomName || room.name;
     room.caregiver = caregiver;
 
     if(!tick) return;
-    if(qty<=0){ return; }
+    const totalQty = sizeQtys.S + sizeQtys.M + sizeQtys.L + sizeQtys.XL;
+    if(totalQty<=0) return;
     if(!caregiver){ toast(`${roomName}: caregiver name is required to issue`, true); return; }
 
-    const item = findOrCreateDiaperItem(size);
-    uid("outgoing");
-    DB.outgoing.push({
-      id: "out_"+Date.now()+"_"+i,
-      date, time,
-      itemId: item.id,
-      qty,
-      department: roomName,
-      receiverName: caregiver,
-      purpose: "Diaper Issue - Dormitory",
-      approvedBy: CURRENT_USER.name,
-      received: true,
-      enteredBy: CURRENT_USER.name
+    DIAPER_SIZES.forEach(size=>{
+      const qty = sizeQtys[size];
+      if(qty<=0) return;
+      const item = findOrCreateDiaperItem(size);
+      uid("outgoing");
+      DB.outgoing.push({
+        id: "out_"+Date.now()+"_"+i+"_"+size,
+        date, time,
+        itemId: item.id,
+        qty,
+        department: roomName,
+        receiverName: caregiver,
+        purpose: "Diaper Issue - Dormitory",
+        approvedBy: CURRENT_USER.name,
+        received: true,
+        enteredBy: CURRENT_USER.name
+      });
     });
     savedCount++;
   });
 
   saveDB(DB);
   if(savedCount>0){ toast(`${savedCount} room(s) recorded`); }
-  else { toast("No rooms were ticked", true); }
+  else { toast("No rooms were ticked, or all quantities were 0", true); }
   renderDiaperIssue();
 }
 
