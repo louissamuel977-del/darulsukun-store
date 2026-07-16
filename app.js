@@ -685,7 +685,7 @@ function describeDeletedRecord(l){
     return `<b>${escHtml(itemName)}</b> — qty ${d.qty}, to ${escHtml(d.department)}, receiver ${escHtml(d.receiverName)}, ${fmtDate(d.date)}`;
   }
   if(l.type==="scrap"){
-    const itemName = getItem(d.itemId)?.name || d.itemId;
+    const itemName = getItem(d.itemId)?.name || d.description || d.itemId;
     return `<b>${escHtml(itemName)}</b> — qty ${d.qty}, reason: ${escHtml(d.reason)}, ${fmtDate(d.date)}`;
   }
   return "Unknown record";
@@ -1252,7 +1252,7 @@ function renderScrap(){
       </div>
       <div class="table-wrap">
       <table>
-        <thead><tr><th>Date</th><th>Item</th><th>Category</th><th>Qty</th><th>Reason</th><th>Approved By</th><th>Remarks</th>${isAdmin()?'<th>Actions</th>':''}</tr></thead>
+        <thead><tr><th>Date</th><th>Time</th><th>Item</th><th>Category</th><th>Qty</th><th>Reason</th><th>Sold</th><th>Approved By</th>${isAdmin()?'<th>Actions</th>':''}</tr></thead>
         <tbody>${scrapRows()}</tbody>
       </table>
       </div>
@@ -1262,23 +1262,26 @@ function renderScrap(){
 function scrapRows(){
   let list = [...DB.scrap].sort((a,b)=>new Date(b.date)-new Date(a.date)).filter(r=>{
     const item = getItem(r.itemId);
+    const name = item ? item.name : (r.description||"");
     if(scrapFilter.reason && r.reason!==scrapFilter.reason) return false;
     if(scrapFilter.from && r.date < scrapFilter.from) return false;
     if(scrapFilter.to && r.date > scrapFilter.to) return false;
-    if(scrapFilter.q && !(item && item.name.toLowerCase().includes(scrapFilter.q.toLowerCase()))) return false;
+    if(scrapFilter.q && !name.toLowerCase().includes(scrapFilter.q.toLowerCase())) return false;
     return true;
   });
-  if(list.length===0) return `<tr><td colspan="8">${emptyState("No scrap/wastage records found.")}</td></tr>`;
+  if(list.length===0) return `<tr><td colspan="9">${emptyState("No scrap/wastage records found.")}</td></tr>`;
   return list.map(r=>{
     const item = getItem(r.itemId);
+    const displayName = item ? item.name : (r.description || "(no description)");
     return `<tr>
       <td>${fmtDate(r.date)}</td>
-      <td><b>${item?escHtml(item.name):'(deleted item)'}</b></td>
-      <td>${item?`<span class="badge ${CATS[item.category].badge}">${CATS[item.category].label}</span>`:'-'}</td>
+      <td>${escHtml(r.time||'-')}</td>
+      <td><b>${escHtml(displayName)}</b></td>
+      <td>${item?`<span class="badge ${CATS[item.category].badge}">${CATS[item.category].label}</span>`:'<span class="text-dim">Not tracked</span>'}</td>
       <td class="mono">${r.qty}</td>
       <td><span class="badge badge-danger">${escHtml(r.reason)}</span></td>
+      <td>${r.sold?`<span class="badge badge-ok">Sold: ${fmtMoney(r.sellAmount)}</span>`:'<span class="text-dim">-</span>'}</td>
       <td>${escHtml(r.approvedBy||'-')}</td>
-      <td>${escHtml(r.remarks||'-')}</td>
       ${isAdmin()?`<td class="row-actions">
         <button class="icon-btn" onclick="openScrapForm('${r.id}')">${ICONS.edit}</button>
         <button class="icon-btn" onclick="deleteScrap('${r.id}')">${ICONS.trash}</button>
@@ -1292,10 +1295,16 @@ function openScrapForm(id){
     <div class="modal-head"><div class="modal-title">${row?'Edit Scrap Entry':'New Scrap Entry'}</div><button class="modal-close" onclick="closeModal()">&times;</button></div>
     <div class="form-grid" style="margin-bottom:14px;">
       <div class="field"><label>Date</label><input type="date" id="s_date" value="${row?row.date:todayStr()}"></div>
-      <div class="field" style="grid-column:span 2;"><label>Item</label>
-        <select id="s_item" onchange="showScrapStockHint()">${itemOptions(row?row.itemId:null)}</select>
+      <div class="field"><label>Time</label><input type="time" id="s_time" value="${row?row.time||'':new Date().toTimeString().slice(0,5)}"></div>
+      <div class="field"><label>Item (from Item Master)</label>
+        <select id="s_item" onchange="showScrapStockHint()">
+          <option value="">-- Not in Item Master --</option>
+          ${itemOptions(row?row.itemId:null)}
+        </select>
       </div>
     </div>
+    <div class="field" style="margin-bottom:14px;"><label>Item / Scrap Description (type freely if not in Item Master)</label>
+      <input type="text" id="s_desc" value="${row?escHtml(row.description||''):''}" placeholder="e.g. broken chairs, empty sacks, scrap metal"></div>
     <div class="form-grid" style="margin-bottom:6px;">
       <div class="field"><label>Qty</label><input type="number" id="s_qty" value="${row?row.qty:''}" min="1" oninput="showScrapStockHint()"></div>
       <div class="field"><label>Reason</label>
@@ -1304,6 +1313,17 @@ function openScrapForm(id){
       <div class="field"><label>Approved By</label><input type="text" id="s_approved" value="${row?escHtml(row.approvedBy||''):CURRENT_USER.name}"></div>
     </div>
     <div id="scrapStockHint" style="font-size:12px;color:var(--ink-faint);margin-bottom:14px;"></div>
+
+    <div class="field" style="margin-bottom:14px;">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+        <input type="checkbox" id="s_sold" ${row&&row.sold?'checked':''} onchange="toggleScrapSoldFields()"> Sold as scrap?
+      </label>
+    </div>
+    <div id="scrapSoldFields" class="form-grid" style="margin-bottom:14px;display:${row&&row.sold?'grid':'none'};">
+      <div class="field"><label>Sell Amount (Rs)</label><input type="number" id="s_sellAmount" value="${row?row.sellAmount||'':''}" min="0"></div>
+      <div class="field" style="grid-column:span 2;"><label>Buyer / Kabari Name</label><input type="text" id="s_buyer" value="${row?escHtml(row.buyerName||''):''}" placeholder="e.g. Ali Scrap Traders"></div>
+    </div>
+
     <div class="field" style="margin-bottom:14px;"><label>Remarks</label><input type="text" id="s_remarks" value="${row?escHtml(row.remarks||''):''}" placeholder="e.g. bag torn during handling"></div>
     <div class="form-actions">
       <button class="btn btn-gold btn-sm" onclick="saveScrap('${id||''}')">Save Entry</button>
@@ -1312,26 +1332,39 @@ function openScrapForm(id){
   `);
   showScrapStockHint();
 }
+function toggleScrapSoldFields(){
+  const checked = document.getElementById("s_sold").checked;
+  document.getElementById("scrapSoldFields").style.display = checked ? "grid" : "none";
+}
 function showScrapStockHint(){
   const itemId = document.getElementById("s_item").value;
   const qty = Number(document.getElementById("s_qty").value)||0;
   const item = getItem(itemId);
   const hint = document.getElementById("scrapStockHint");
-  if(!item){ hint.innerHTML=""; return; }
+  if(!item){ hint.innerHTML = `<span class="text-dim">Not linked to an inventory item — stock will not be reduced.</span>`; return; }
   const stock = stockOf(item.id);
   hint.innerHTML = `Available stock: <b style="color:var(--gold-400)">${stock} ${escHtml(item.unit)}</b>` +
     (qty>stock ? ` — <span style="color:var(--danger)">exceeds available stock!</span>` : "");
 }
 function saveScrap(id){
   const itemId = document.getElementById("s_item").value;
-  if(!itemId){ toast("Please select an item", true); return; }
+  const description = document.getElementById("s_desc").value.trim();
+  if(!itemId && !description){ toast("Select an item or type a description", true); return; }
   const qty = Number(document.getElementById("s_qty").value)||0;
   if(qty<=0){ toast("Qty must be greater than 0", true); return; }
+  const sold = document.getElementById("s_sold").checked;
+  const sellAmount = sold ? (Number(document.getElementById("s_sellAmount").value)||0) : 0;
+
   const data = {
     date: document.getElementById("s_date").value || todayStr(),
-    itemId,
+    time: document.getElementById("s_time").value || new Date().toTimeString().slice(0,5),
+    itemId: itemId || null,
+    description,
     qty,
     reason: document.getElementById("s_reason").value,
+    sold,
+    sellAmount,
+    buyerName: sold ? document.getElementById("s_buyer").value.trim() : "",
     approvedBy: document.getElementById("s_approved").value.trim(),
     remarks: document.getElementById("s_remarks").value.trim(),
     enteredBy: CURRENT_USER.name
@@ -1450,15 +1483,18 @@ function buildReport(){
     const rows = DB.scrap.filter(r=>inRange(r.date)).sort((a,b)=>new Date(b.date)-new Date(a.date));
     if(!rows.length) return emptyState("No scrap/wastage records in this date range.");
     const byReason = {};
-    rows.forEach(r=>{ byReason[r.reason] = (byReason[r.reason]||0) + Number(r.qty); });
+    let totalSaleAmount = 0;
+    rows.forEach(r=>{ byReason[r.reason] = (byReason[r.reason]||0) + Number(r.qty); if(r.sold) totalSaleAmount += Number(r.sellAmount||0); });
     return `
-      <div style="margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap;">
+      <div style="margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
         ${Object.entries(byReason).map(([reason,qty])=>`<span class="badge badge-danger">${escHtml(reason)}: ${qty}</span>`).join("")}
+        <span class="badge badge-ok">Total from Scrap Sales: ${fmtMoney(totalSaleAmount)}</span>
       </div>
-      <div class="table-wrap"><table><thead><tr><th>Date</th><th>Item</th><th>Category</th><th>Qty</th><th>Reason</th><th>Approved By</th><th>Remarks</th></tr></thead>
+      <div class="table-wrap"><table><thead><tr><th>Date</th><th>Time</th><th>Item</th><th>Category</th><th>Qty</th><th>Reason</th><th>Sold</th><th>Amount</th><th>Buyer</th><th>Approved By</th><th>Remarks</th></tr></thead>
       <tbody>${rows.map(r=>{
         const item = getItem(r.itemId);
-        return `<tr><td>${fmtDate(r.date)}</td><td>${item?escHtml(item.name):'-'}</td><td>${item?CATS[item.category].label:'-'}</td><td class="mono">${r.qty}</td><td><span class="badge badge-danger">${escHtml(r.reason)}</span></td><td>${escHtml(r.approvedBy||'-')}</td><td>${escHtml(r.remarks||'-')}</td></tr>`;
+        const name = item ? item.name : (r.description || "-");
+        return `<tr><td>${fmtDate(r.date)}</td><td>${escHtml(r.time||'-')}</td><td>${escHtml(name)}</td><td>${item?CATS[item.category].label:'<span class="text-dim">Not tracked</span>'}</td><td class="mono">${r.qty}</td><td><span class="badge badge-danger">${escHtml(r.reason)}</span></td><td>${r.sold?'Yes':'No'}</td><td class="mono">${r.sold?fmtMoney(r.sellAmount):'-'}</td><td>${escHtml(r.buyerName||'-')}</td><td>${escHtml(r.approvedBy||'-')}</td><td>${escHtml(r.remarks||'-')}</td></tr>`;
       }).join("")}</tbody></table></div>`;
   }
   if(reportTab==="stockregister"){
@@ -1544,10 +1580,11 @@ function exportReport(){
     rows.push(["Item","Batch","Expiry Date"]);
     DB.incoming.filter(r=>r.expiryDate).forEach(r=>rows.push([getItem(r.itemId)?.name||'',r.batchNo||'',r.expiryDate]));
   } else if(reportTab==="scrapreport"){
-    rows.push(["Date","Item","Category","Qty","Reason","Approved By","Remarks"]);
+    rows.push(["Date","Time","Item","Category","Qty","Reason","Sold","Amount","Buyer","Approved By","Remarks"]);
     DB.scrap.filter(r=>inRange(r.date)).forEach(r=>{
       const item = getItem(r.itemId);
-      rows.push([r.date, item?item.name:'', item?CATS[item.category].label:'', r.qty, r.reason, r.approvedBy||'', r.remarks||'']);
+      const name = item ? item.name : (r.description || "");
+      rows.push([r.date, r.time||'', name, item?CATS[item.category].label:'', r.qty, r.reason, r.sold?'Yes':'No', r.sold?r.sellAmount:'', r.buyerName||'', r.approvedBy||'', r.remarks||'']);
     });
   } else if(reportTab==="consumption"){
     rows.push(["Department","Item","Total Qty Issued"]);
