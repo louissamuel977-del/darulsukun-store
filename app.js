@@ -875,7 +875,7 @@ function renderDiaperIssue(){
         <tbody>
           ${DB.dormRooms.map((r,i)=>`
             <tr>
-              <td><input type="checkbox" id="dp_tick_${i}" style="width:18px;height:18px;accent-color:var(--gold-500);cursor:pointer;"></td>
+              <td><input type="checkbox" id="dp_tick_${i}" style="width:15px;height:15px;accent-color:var(--gold-500);cursor:pointer;"></td>
               <td>${canEdit()?`<input type="text" id="dp_room_${i}" value="${escHtml(r.name)}" style="width:120px;padding:6px 8px;">`:`<b>${escHtml(r.name)}</b>`}</td>
               <td><input type="text" id="dp_caregiver_${i}" value="${escHtml(r.caregiver||'')}" placeholder="Caregiver name" style="width:150px;padding:6px 8px;"></td>
               <td><input type="number" id="dp_qty_S_${i}" value="0" min="0" style="width:60px;padding:6px 8px;" oninput="updateDiaperRowTotal(${i})"></td>
@@ -887,7 +887,7 @@ function renderDiaperIssue(){
         </tbody>
       </table>
       </div>
-      ${canEdit()?`<div class="form-actions"><button class="btn btn-gold" onclick="saveDiaperIssue()">${ICONS.check} Save Ticked Rooms</button></div>`:
+      ${canEdit()?`<div class="form-actions"><button class="btn btn-gold btn-sm" onclick="saveDiaperIssue()">${ICONS.check} Save Ticked Rooms</button></div>`:
         `<p class="text-dim" style="font-size:12.5px;margin-top:14px;">You have view-only access — ask a Store Keeper or Admin to save issues.</p>`}
     </div>
     <div class="panel">
@@ -897,15 +897,27 @@ function renderDiaperIssue(){
   `;
 }
 function todayDiaperRows(){
-  const diaperItemIds = DB.items.filter(i=>i.category==="diapers").map(i=>i.id);
-  const rows = DB.outgoing.filter(r => r.date===diaperDate && diaperItemIds.includes(r.itemId) && r.purpose==="Diaper Issue - Dormitory")
-    .sort((a,b)=> (b.time||"").localeCompare(a.time||""));
+  const diaperItems = DB.items.filter(i=>i.category==="diapers");
+  const diaperItemIds = diaperItems.map(i=>i.id);
+  const rows = DB.outgoing.filter(r => r.date===diaperDate && diaperItemIds.includes(r.itemId) && r.purpose==="Diaper Issue - Dormitory");
   if(rows.length===0) return emptyState("No diaper issues recorded for this date yet.");
-  return `<div class="table-wrap"><table><thead><tr><th>Date</th><th>Time</th><th>Room</th><th>Caregiver</th><th>Size</th><th>Qty</th></tr></thead>
-    <tbody>${rows.map(r=>{
-      const item = getItem(r.itemId);
-      const size = item ? item.name.replace("Diapers ","") : "-";
-      return `<tr><td>${fmtDate(r.date)}</td><td>${escHtml(r.time||'-')}</td><td>${escHtml(r.department)}</td><td>${escHtml(r.receiverName)}</td><td><span class="badge badge-dp">${size}</span></td><td class="mono">${r.qty}</td></tr>`;
+
+  // Group into one line per issue: prefer batchId (new entries); fall back to
+  // date+time+room+caregiver for older entries saved before batching existed.
+  const groups = {};
+  rows.forEach(r=>{
+    const key = r.batchId || `${r.date}|${r.time||''}|${r.department}|${r.receiverName}`;
+    if(!groups[key]) groups[key] = { date:r.date, time:r.time||'-', department:r.department, receiverName:r.receiverName, S:0, M:0, L:0, XL:0 };
+    const item = diaperItems.find(it=>it.id===r.itemId);
+    const size = item ? item.name.replace("Diapers ","").trim() : "";
+    if(groups[key][size] !== undefined) groups[key][size] += Number(r.qty);
+  });
+  const list = Object.values(groups).sort((a,b)=> (b.time||"").localeCompare(a.time||""));
+
+  return `<div class="table-wrap"><table><thead><tr><th>Date</th><th>Time</th><th>Room</th><th>Caregiver</th><th>S</th><th>M</th><th>L</th><th>XL</th><th>Total</th></tr></thead>
+    <tbody>${list.map(g=>{
+      const total = g.S+g.M+g.L+g.XL;
+      return `<tr><td>${fmtDate(g.date)}</td><td>${escHtml(g.time)}</td><td>${escHtml(g.department)}</td><td>${escHtml(g.receiverName)}</td><td class="mono">${g.S||'-'}</td><td class="mono">${g.M||'-'}</td><td class="mono">${g.L||'-'}</td><td class="mono">${g.XL||'-'}</td><td class="mono"><b>${total}</b></td></tr>`;
     }).join("")}</tbody></table></div>`;
 }
 function updateDiaperRowTotal(i){
@@ -941,6 +953,7 @@ function saveDiaperIssue(){
     if(totalQty<=0) return;
     if(!caregiver){ toast(`${roomName}: caregiver name is required to issue`, true); return; }
 
+    const batchId = "batch_"+Date.now()+"_"+i;
     DIAPER_SIZES.forEach(size=>{
       const qty = sizeQtys[size];
       if(qty<=0) return;
@@ -954,6 +967,7 @@ function saveDiaperIssue(){
         department: roomName,
         receiverName: caregiver,
         purpose: "Diaper Issue - Dormitory",
+        batchId,
         approvedBy: CURRENT_USER.name,
         received: true,
         enteredBy: CURRENT_USER.name
