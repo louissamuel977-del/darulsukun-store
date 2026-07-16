@@ -347,7 +347,9 @@ function renderDashboard(){
   }).sort((a,b)=> daysUntil(a.expiryDate) - daysUntil(b.expiryDate));
 
   const recentIn = [...DB.incoming].sort((a,b)=> new Date(b.date)-new Date(a.date)).slice(0,5);
-  const recentOut = [...DB.outgoing].sort((a,b)=> new Date(b.date)-new Date(a.date)).slice(0,5);
+  const recentOut = [...DB.outgoing]
+    .filter(r => { const it = getItem(r.itemId); return !it || it.category !== "diapers"; })
+    .sort((a,b)=> new Date(b.date)-new Date(a.date)).slice(0,5);
 
   main.innerHTML = `
     ${topbarHtml("Dashboard","Overview of stock, alerts, and recent activity")}
@@ -764,7 +766,7 @@ function openOutgoingForm(id){
     <div class="form-grid" style="margin-bottom:14px;">
       <div class="field"><label>Date</label><input type="date" id="f_date" value="${row?row.date:todayStr()}"></div>
       <div class="field" style="grid-column:span 2;"><label>Item</label>
-        <select id="f_item" onchange="showStockHint()">${itemOptions(row?row.itemId:null)}</select>
+        <select id="f_item" onchange="outgoingItemChanged()">${itemOptions(row?row.itemId:null)}</select>
       </div>
     </div>
     <div class="form-grid" style="margin-bottom:6px;">
@@ -789,15 +791,54 @@ function openOutgoingForm(id){
   `);
   showStockHint();
 }
+function outgoingItemChanged(){
+  const itemId = document.getElementById("f_item").value;
+  const item = getItem(itemId);
+  if(item){
+    const stock = stockOf(item.id);
+    if(stock<=0){
+      toast(`"${item.name}" is not in stock`, true);
+    }
+    const expiredBatch = DB.incoming.find(r=>r.itemId===item.id && r.expiryDate && daysUntil(r.expiryDate)<0);
+    if(expiredBatch){
+      toast(`"${item.name}" has an expired batch (expired ${fmtDate(expiredBatch.expiryDate)})`, true);
+    }
+  }
+  showStockHint();
+}
+function estimateStockoutDate(itemId, currentStock){
+  const since = new Date(); since.setDate(since.getDate()-30);
+  const sinceStr = since.toISOString().slice(0,10);
+  const recentOutQty = DB.outgoing.filter(r=>r.itemId===itemId && r.date>=sinceStr).reduce((s,r)=>s+Number(r.qty),0);
+  if(recentOutQty<=0) return null;
+  const avgDaily = recentOutQty/30;
+  if(avgDaily<=0) return null;
+  const daysLeft = Math.floor(currentStock/avgDaily);
+  const d = new Date(); d.setDate(d.getDate()+daysLeft);
+  return d.toISOString().slice(0,10);
+}
 function showStockHint(){
   const itemId = document.getElementById("f_item").value;
   const qty = Number(document.getElementById("f_qty").value)||0;
   const item = getItem(itemId);
   const hint = document.getElementById("stockHint");
-  if(!item){ hint.textContent=""; return; }
+  if(!item){ hint.innerHTML=""; return; }
   const stock = stockOf(item.id);
-  hint.innerHTML = `Available stock: <b style="color:var(--gold-400)">${stock} ${escHtml(item.unit)}</b>` +
-    (qty>stock ? ` — <span style="color:var(--danger)">exceeds available stock!</span>` : "");
+  let html = `Available stock: <b style="color:var(--gold-400)">${stock} ${escHtml(item.unit)}</b>`;
+  if(qty>stock) html += ` — <span style="color:var(--danger)">exceeds available stock!</span>`;
+  if(stock<=0){
+    html += `<br><span style="color:var(--danger);">⚠ This item is not currently in stock.</span>`;
+  } else {
+    const stockoutDate = estimateStockoutDate(item.id, stock);
+    if(stockoutDate){
+      html += `<br><span style="color:var(--warn);">At current usage rate, stock may run out around ${fmtDate(stockoutDate)}.</span>`;
+    }
+  }
+  const expiredBatch = DB.incoming.find(r=>r.itemId===item.id && r.expiryDate && daysUntil(r.expiryDate)<0);
+  if(expiredBatch){
+    html += `<br><span style="color:var(--danger);">⚠ This item has an expired batch (expired ${fmtDate(expiredBatch.expiryDate)}).</span>`;
+  }
+  hint.innerHTML = html;
 }
 function saveOutgoing(id){
   const itemId = document.getElementById("f_item").value;
