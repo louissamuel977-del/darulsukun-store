@@ -26,7 +26,9 @@ const ICONS = {
   download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>',
   upload: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>',
   diaper: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16M4 5c0 7 1.5 11 8 14 6.5-3 8-7 8-14M9 11c1 1.5 2 2 3 2s2-.5 3-2"/></svg>',
-  check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg>'
+  check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg>',
+  scrap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6M10 11v6M14 11v6"/></svg>',
+  undo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6M3 13a9 9 0 1 0 3-6.7L3 9"/></svg>'
 };
 
 function defaultDB(){
@@ -39,9 +41,10 @@ function defaultDB(){
     items: [],
     incoming: [],
     outgoing: [],
+    scrap: [],
     deletionLog: [],
     auditPin: "1955",
-    seq: { item: 0, incoming: 0, outgoing: 0 }
+    seq: { item: 0, incoming: 0, outgoing: 0, scrap: 0 }
   };
 }
 
@@ -65,12 +68,14 @@ function sanitizeDB(raw){
     items: toArray(raw.items),
     incoming: toArray(raw.incoming),
     outgoing: toArray(raw.outgoing),
+    scrap: toArray(raw.scrap),
     deletionLog: toArray(raw.deletionLog),
     auditPin: (typeof raw.auditPin === "string" && raw.auditPin) ? raw.auditPin : base.auditPin,
     seq: (raw.seq && typeof raw.seq === "object") ? {
       item: Number(raw.seq.item)||0,
       incoming: Number(raw.seq.incoming)||0,
-      outgoing: Number(raw.seq.outgoing)||0
+      outgoing: Number(raw.seq.outgoing)||0,
+      scrap: Number(raw.seq.scrap)||0
     } : base.seq
   };
   // Drop any item/entry that isn't a valid object, and fix unknown categories
@@ -81,6 +86,7 @@ function sanitizeDB(raw){
   }));
   db.incoming = db.incoming.filter(r => r && typeof r === "object" && r.id);
   db.outgoing = db.outgoing.filter(r => r && typeof r === "object" && r.id);
+  db.scrap = db.scrap.filter(r => r && typeof r === "object" && r.id);
   return db;
 }
 
@@ -217,6 +223,7 @@ const NAV_ITEMS = [
   { id:"incoming", label:"Inward Entry", icon:"incoming" },
   { id:"outgoing", label:"Outward Entry", icon:"outgoing" },
   { id:"diapers", label:"Diaper Issue", icon:"diaper" },
+  { id:"scrap", label:"Scrap / Wastage", icon:"scrap" },
   { id:"reports", label:"Reports", icon:"reports" },
   { id:"departments", label:"Departments", icon:"departments" },
   { id:"settings", label:"Settings", icon:"settings" }
@@ -238,6 +245,7 @@ function goTo(page){
     incoming: renderIncoming,
     outgoing: renderOutgoing,
     diapers: renderDiaperIssue,
+    scrap: renderScrap,
     reports: renderReports,
     departments: renderDepartments,
     settings: renderSettings
@@ -288,7 +296,8 @@ function getItem(id){ return DB.items.find(i=>i.id===id); }
 function stockOf(itemId){
   const inn = DB.incoming.filter(r=>r.itemId===itemId).reduce((s,r)=>s+Number(r.qty),0);
   const out = DB.outgoing.filter(r=>r.itemId===itemId).reduce((s,r)=>s+Number(r.qty),0);
-  return inn - out;
+  const scr = DB.scrap.filter(r=>r.itemId===itemId).reduce((s,r)=>s+Number(r.qty),0);
+  return inn - out - scr;
 }
 function toast(msg, isError){
   const host = document.getElementById("toastHost");
@@ -558,8 +567,22 @@ function checkAuditPin(){
 }
 function renderAuditLog(){
   const log = [...DB.deletionLog].sort((a,b)=> new Date(b.deletedAt)-new Date(a.deletedAt));
-  openModal(`
-    <div class="modal-head"><div class="modal-title">Deletion History <span class="count" style="color:var(--gold-400);font-size:13px;">(${log.length})</span></div><button class="modal-close" onclick="closeModal()">&times;</button></div>
+  const counts = { item:0, incoming:0, outgoing:0, scrap:0 };
+  log.forEach(l=>{ if(counts[l.type]!==undefined) counts[l.type]++; });
+
+  document.getElementById("modalBody").innerHTML = `
+    <div class="modal-head"><div class="modal-title">Deletion Audit Log</div><button class="modal-close" onclick="closeModal()">&times;</button></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+      <span class="badge badge-hh">Items: ${counts.item}</span>
+      <span class="badge badge-ok">Inward: ${counts.incoming}</span>
+      <span class="badge badge-warn">Outward: ${counts.outgoing}</span>
+      <span class="badge badge-danger">Scrap: ${counts.scrap}</span>
+      <span class="badge" style="background:rgba(212,175,55,0.15);color:var(--gold-400);">Total: ${log.length}</span>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+      <button class="btn btn-ghost btn-sm" onclick="printAuditLog()">${ICONS.download} Print</button>
+      <button class="btn btn-ghost btn-sm" onclick="exportAuditLog()">${ICONS.download} Export CSV</button>
+    </div>
     ${isAdmin()?`
     <div class="field" style="margin-bottom:14px;"><label>Change Audit PIN</label>
       <div style="display:flex;gap:8px;">
@@ -567,20 +590,88 @@ function renderAuditLog(){
         <button class="btn btn-ghost btn-sm" onclick="changeAuditPin()">Update</button>
       </div>
     </div>` : ""}
-    <div style="max-height:50vh;overflow-y:auto;">
+    <div style="max-height:45vh;overflow-y:auto;">
     ${log.length===0 ? emptyState("No deletions recorded yet.") : log.map(l=>`
       <div class="alert-item" style="align-items:flex-start;flex-direction:column;gap:6px;">
-        <div style="display:flex;justify-content:space-between;width:100%;">
-          <span class="badge ${l.type==='item'?'badge-hh':l.type==='incoming'?'badge-ok':'badge-warn'}">${l.type.toUpperCase()}</span>
-          <span class="mono text-dim" style="font-size:11px;">${new Date(l.deletedAt).toLocaleString("en-GB")}</span>
+        <div style="display:flex;justify-content:space-between;width:100%;gap:10px;">
+          <span class="badge ${l.type==='item'?'badge-hh':l.type==='incoming'?'badge-ok':l.type==='scrap'?'badge-danger':'badge-warn'}">${l.type.toUpperCase()}</span>
+          <span class="mono text-dim" style="font-size:11px;white-space:nowrap;">${new Date(l.deletedAt).toLocaleString("en-GB")}</span>
         </div>
         <div style="font-size:12.5px;">${describeDeletedRecord(l)}</div>
-        <div style="font-size:11.5px;color:var(--ink-faint);">Deleted by: ${escHtml(l.deletedBy)}</div>
+        <div style="display:flex;justify-content:space-between;width:100%;align-items:center;">
+          <div style="font-size:11.5px;color:var(--ink-faint);">Deleted by: ${escHtml(l.deletedBy)}</div>
+          ${isAdmin()?`<button class="btn btn-ghost btn-sm" onclick="restoreDeletedRecord('${l.id}')">${ICONS.undo} Undo</button>`:''}
+        </div>
       </div>
     `).join("")}
     </div>
     <div class="form-actions"><button class="btn btn-ghost btn-sm" onclick="closeModal()">Close</button></div>
+  `;
+}
+function restoreDeletedRecord(logId){
+  const log = DB.deletionLog.find(l=>l.id===logId);
+  if(!log) return;
+  if(!confirm(`Restore this ${log.type} record?`)) return;
+
+  if(log.type==="item") DB.items.push(log.data);
+  else if(log.type==="incoming") DB.incoming.push(log.data);
+  else if(log.type==="outgoing") DB.outgoing.push(log.data);
+  else if(log.type==="scrap") DB.scrap.push(log.data);
+
+  DB.deletionLog = DB.deletionLog.filter(l=>l.id!==logId);
+  saveDB(DB);
+  toast("Record restored");
+  renderAuditLog();
+}
+function exportAuditLog(){
+  const log = [...DB.deletionLog].sort((a,b)=> new Date(b.deletedAt)-new Date(a.deletedAt));
+  const rows = [["Type","Details","Deleted By","Deleted At"]];
+  log.forEach(l=>{
+    const desc = describeDeletedRecord(l).replace(/<[^>]*>/g,"");
+    rows.push([l.type, desc, l.deletedBy, new Date(l.deletedAt).toLocaleString("en-GB")]);
+  });
+  downloadCSV(`dus-store-audit-log-${todayStr()}.csv`, rows);
+  toast("Audit log exported");
+}
+function printAuditLog(){
+  const log = [...DB.deletionLog].sort((a,b)=> new Date(b.deletedAt)-new Date(a.deletedAt));
+  const logoUrl = location.origin + location.pathname.replace(/[^/]*$/, "") + "logo.jpg";
+  const rowsHtml = log.map(l=>`
+    <tr>
+      <td>${l.type.toUpperCase()}</td>
+      <td>${describeDeletedRecord(l).replace(/<[^>]*>/g,"")}</td>
+      <td>${escHtml(l.deletedBy)}</td>
+      <td>${new Date(l.deletedAt).toLocaleString("en-GB")}</td>
+    </tr>`).join("");
+  const win = window.open("", "_blank");
+  win.document.write(`
+    <html><head><title>Deletion Audit Log</title>
+    <style>
+      body{font-family:Arial,sans-serif;padding:30px;color:#000;}
+      .header{display:flex;align-items:center;gap:16px;border-bottom:3px solid #B8860B;padding-bottom:14px;margin-bottom:20px;}
+      .header img{width:56px;height:56px;border-radius:50%;}
+      h1{font-size:19px;margin:0;}
+      .sub{font-size:11px;color:#555;margin-top:2px;}
+      table{width:100%;border-collapse:collapse;font-size:12px;margin-top:16px;}
+      th,td{text-align:left;padding:8px;border-bottom:1px solid #ccc;}
+      th{background:#f2f2f2;}
+      .meta{font-size:11px;color:#555;margin-top:4px;}
+    </style></head>
+    <body>
+      <div class="header">
+        <img src="${logoUrl}">
+        <div>
+          <h1>Dar-ul-Sukun Head Office Store — Deletion Audit Log</h1>
+          <div class="sub">Powered by Nexora Digital Marketing Agency</div>
+        </div>
+      </div>
+      <div class="meta">Generated: ${new Date().toLocaleString("en-GB")} · Total records: ${log.length}</div>
+      <table><thead><tr><th>Type</th><th>Details</th><th>Deleted By</th><th>Deleted At</th></tr></thead>
+      <tbody>${rowsHtml || '<tr><td colspan="4">No deletions recorded.</td></tr>'}</tbody></table>
+    </body></html>
   `);
+  win.document.close();
+  setTimeout(()=>win.print(), 400);
 }
 function describeDeletedRecord(l){
   const d = l.data;
@@ -592,6 +683,10 @@ function describeDeletedRecord(l){
   if(l.type==="outgoing"){
     const itemName = getItem(d.itemId)?.name || d.itemId;
     return `<b>${escHtml(itemName)}</b> — qty ${d.qty}, to ${escHtml(d.department)}, receiver ${escHtml(d.receiverName)}, ${fmtDate(d.date)}`;
+  }
+  if(l.type==="scrap"){
+    const itemName = getItem(d.itemId)?.name || d.itemId;
+    return `<b>${escHtml(itemName)}</b> — qty ${d.qty}, reason: ${escHtml(d.reason)}, ${fmtDate(d.date)}`;
   }
   return "Unknown record";
 }
@@ -615,20 +710,23 @@ function deleteItem(id){
   const item = getItem(id);
   const relatedIncoming = DB.incoming.filter(r=>r.itemId===id);
   const relatedOutgoing = DB.outgoing.filter(r=>r.itemId===id);
-  const relatedCount = relatedIncoming.length + relatedOutgoing.length;
+  const relatedScrap = DB.scrap.filter(r=>r.itemId===id);
+  const relatedCount = relatedIncoming.length + relatedOutgoing.length + relatedScrap.length;
 
   const msg = relatedCount>0
-    ? `Delete this item? It has ${relatedIncoming.length} inward and ${relatedOutgoing.length} outward record(s) — these will be deleted too. This cannot be undone.`
+    ? `Delete this item? It has ${relatedIncoming.length} inward, ${relatedOutgoing.length} outward, and ${relatedScrap.length} scrap record(s) — these will be deleted too. This cannot be undone.`
     : "Delete this item? This cannot be undone.";
   if(!confirm(msg)) return;
 
   if(item) logDeletion("item", item);
   relatedIncoming.forEach(r=>logDeletion("incoming", r));
   relatedOutgoing.forEach(r=>logDeletion("outgoing", r));
+  relatedScrap.forEach(r=>logDeletion("scrap", r));
 
   DB.items = DB.items.filter(i=>i.id!==id);
   DB.incoming = DB.incoming.filter(r=>r.itemId!==id);
   DB.outgoing = DB.outgoing.filter(r=>r.itemId!==id);
+  DB.scrap = DB.scrap.filter(r=>r.itemId!==id);
   saveDB(DB);
   toast(relatedCount>0 ? `Item and ${relatedCount} related record(s) deleted` : "Item deleted");
   renderItems();
@@ -1129,6 +1227,139 @@ function saveDiaperIssue(){
 }
 
 /* ============================================================
+   SCRAP / WASTAGE — write off damaged, expired, spoiled, lost,
+   or broken stock. Reduces stock like an outward issue, but is
+   tracked separately from department issuance for clean reporting.
+   ============================================================ */
+const SCRAP_REASONS = ["Damaged","Expired","Spoiled","Broken","Lost","Other"];
+let scrapFilter = { reason:"", from:"", to:"", q:"" };
+
+function renderScrap(){
+  const main = document.getElementById("mainContent");
+  main.innerHTML = `
+    ${topbarHtml("Scrap / Wastage","Write off damaged, expired, or lost stock", canEdit()?`<button class="btn btn-gold btn-sm" onclick="openScrapForm()">${ICONS.plus}New Scrap Entry</button>`:"")}
+    <div class="panel">
+      <div class="filter-bar">
+        <div class="field"><label>Reason</label>
+          <select onchange="scrapFilter.reason=this.value;renderScrap()">
+            <option value="">All</option>
+            ${SCRAP_REASONS.map(r=>`<option value="${r}" ${scrapFilter.reason===r?'selected':''}>${r}</option>`).join("")}
+          </select>
+        </div>
+        <div class="field"><label>From</label><input type="date" value="${scrapFilter.from}" onchange="scrapFilter.from=this.value;renderScrap()"></div>
+        <div class="field"><label>To</label><input type="date" value="${scrapFilter.to}" onchange="scrapFilter.to=this.value;renderScrap()"></div>
+        <div class="field" style="flex:1;min-width:200px;"><label>Search</label><input type="text" placeholder="Search item..." value="${escHtml(scrapFilter.q)}" oninput="scrapFilter.q=this.value;renderScrap()"></div>
+      </div>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Date</th><th>Item</th><th>Category</th><th>Qty</th><th>Reason</th><th>Approved By</th><th>Remarks</th>${isAdmin()?'<th>Actions</th>':''}</tr></thead>
+        <tbody>${scrapRows()}</tbody>
+      </table>
+      </div>
+    </div>
+  `;
+}
+function scrapRows(){
+  let list = [...DB.scrap].sort((a,b)=>new Date(b.date)-new Date(a.date)).filter(r=>{
+    const item = getItem(r.itemId);
+    if(scrapFilter.reason && r.reason!==scrapFilter.reason) return false;
+    if(scrapFilter.from && r.date < scrapFilter.from) return false;
+    if(scrapFilter.to && r.date > scrapFilter.to) return false;
+    if(scrapFilter.q && !(item && item.name.toLowerCase().includes(scrapFilter.q.toLowerCase()))) return false;
+    return true;
+  });
+  if(list.length===0) return `<tr><td colspan="8">${emptyState("No scrap/wastage records found.")}</td></tr>`;
+  return list.map(r=>{
+    const item = getItem(r.itemId);
+    return `<tr>
+      <td>${fmtDate(r.date)}</td>
+      <td><b>${item?escHtml(item.name):'(deleted item)'}</b></td>
+      <td>${item?`<span class="badge ${CATS[item.category].badge}">${CATS[item.category].label}</span>`:'-'}</td>
+      <td class="mono">${r.qty}</td>
+      <td><span class="badge badge-danger">${escHtml(r.reason)}</span></td>
+      <td>${escHtml(r.approvedBy||'-')}</td>
+      <td>${escHtml(r.remarks||'-')}</td>
+      ${isAdmin()?`<td class="row-actions">
+        <button class="icon-btn" onclick="openScrapForm('${r.id}')">${ICONS.edit}</button>
+        <button class="icon-btn" onclick="deleteScrap('${r.id}')">${ICONS.trash}</button>
+      </td>`:''}
+    </tr>`;
+  }).join("");
+}
+function openScrapForm(id){
+  const row = id ? DB.scrap.find(r=>r.id===id) : null;
+  openModal(`
+    <div class="modal-head"><div class="modal-title">${row?'Edit Scrap Entry':'New Scrap Entry'}</div><button class="modal-close" onclick="closeModal()">&times;</button></div>
+    <div class="form-grid" style="margin-bottom:14px;">
+      <div class="field"><label>Date</label><input type="date" id="s_date" value="${row?row.date:todayStr()}"></div>
+      <div class="field" style="grid-column:span 2;"><label>Item</label>
+        <select id="s_item" onchange="showScrapStockHint()">${itemOptions(row?row.itemId:null)}</select>
+      </div>
+    </div>
+    <div class="form-grid" style="margin-bottom:6px;">
+      <div class="field"><label>Qty</label><input type="number" id="s_qty" value="${row?row.qty:''}" min="1" oninput="showScrapStockHint()"></div>
+      <div class="field"><label>Reason</label>
+        <select id="s_reason">${SCRAP_REASONS.map(r=>`<option value="${r}" ${row&&row.reason===r?'selected':''}>${r}</option>`).join("")}</select>
+      </div>
+      <div class="field"><label>Approved By</label><input type="text" id="s_approved" value="${row?escHtml(row.approvedBy||''):CURRENT_USER.name}"></div>
+    </div>
+    <div id="scrapStockHint" style="font-size:12px;color:var(--ink-faint);margin-bottom:14px;"></div>
+    <div class="field" style="margin-bottom:14px;"><label>Remarks</label><input type="text" id="s_remarks" value="${row?escHtml(row.remarks||''):''}" placeholder="e.g. bag torn during handling"></div>
+    <div class="form-actions">
+      <button class="btn btn-gold btn-sm" onclick="saveScrap('${id||''}')">Save Entry</button>
+      <button class="btn btn-ghost btn-sm" onclick="closeModal()">Cancel</button>
+    </div>
+  `);
+  showScrapStockHint();
+}
+function showScrapStockHint(){
+  const itemId = document.getElementById("s_item").value;
+  const qty = Number(document.getElementById("s_qty").value)||0;
+  const item = getItem(itemId);
+  const hint = document.getElementById("scrapStockHint");
+  if(!item){ hint.innerHTML=""; return; }
+  const stock = stockOf(item.id);
+  hint.innerHTML = `Available stock: <b style="color:var(--gold-400)">${stock} ${escHtml(item.unit)}</b>` +
+    (qty>stock ? ` — <span style="color:var(--danger)">exceeds available stock!</span>` : "");
+}
+function saveScrap(id){
+  const itemId = document.getElementById("s_item").value;
+  if(!itemId){ toast("Please select an item", true); return; }
+  const qty = Number(document.getElementById("s_qty").value)||0;
+  if(qty<=0){ toast("Qty must be greater than 0", true); return; }
+  const data = {
+    date: document.getElementById("s_date").value || todayStr(),
+    itemId,
+    qty,
+    reason: document.getElementById("s_reason").value,
+    approvedBy: document.getElementById("s_approved").value.trim(),
+    remarks: document.getElementById("s_remarks").value.trim(),
+    enteredBy: CURRENT_USER.name
+  };
+  if(id){
+    const row = DB.scrap.find(r=>r.id===id);
+    Object.assign(row, data);
+    toast("Scrap entry updated");
+  } else {
+    uid("scrap");
+    DB.scrap.push({ id:"scr_"+Date.now(), ...data });
+    toast("Scrap entry saved");
+  }
+  saveDB(DB);
+  closeModal();
+  renderScrap();
+}
+function deleteScrap(id){
+  if(!confirm("Delete this scrap entry?")) return;
+  const row = DB.scrap.find(r=>r.id===id);
+  if(row) logDeletion("scrap", row);
+  DB.scrap = DB.scrap.filter(r=>r.id!==id);
+  saveDB(DB);
+  toast("Entry deleted");
+  renderScrap();
+}
+
+/* ============================================================
    REPORTS
    ============================================================ */
 let reportTab = "daily";
@@ -1146,6 +1377,7 @@ function renderReports(){
             <option value="donation" ${reportTab==='donation'?'selected':''}>Donation Report</option>
             <option value="purchasing" ${reportTab==='purchasing'?'selected':''}>Purchasing Report</option>
             <option value="expiry" ${reportTab==='expiry'?'selected':''}>Expired / Near-Expiry Report</option>
+            <option value="scrapreport" ${reportTab==='scrapreport'?'selected':''}>Scrap / Wastage Report</option>
             <option value="stockregister" ${reportTab==='stockregister'?'selected':''}>Full Stock Register</option>
             <option value="diaperreport" ${reportTab==='diaperreport'?'selected':''}>Diaper Issue Report (by Size)</option>
           </select>
@@ -1213,6 +1445,21 @@ function buildReport(){
         const status = d<0?'<span class="badge badge-danger">Expired</span>':d<=30?'<span class="badge badge-warn">Expiring Soon</span>':'<span class="badge badge-ok">OK</span>';
         return `<tr><td>${escHtml(getItem(r.itemId)?.name||'-')}</td><td>${escHtml(r.batchNo||'-')}</td><td>${fmtDate(r.expiryDate)}</td><td>${status}</td></tr>`;
       }).join(""):`<tr><td colspan="4">${emptyState("No items with expiry dates")}</td></tr>`}</tbody></table></div>`;
+  }
+  if(reportTab==="scrapreport"){
+    const rows = DB.scrap.filter(r=>inRange(r.date)).sort((a,b)=>new Date(b.date)-new Date(a.date));
+    if(!rows.length) return emptyState("No scrap/wastage records in this date range.");
+    const byReason = {};
+    rows.forEach(r=>{ byReason[r.reason] = (byReason[r.reason]||0) + Number(r.qty); });
+    return `
+      <div style="margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap;">
+        ${Object.entries(byReason).map(([reason,qty])=>`<span class="badge badge-danger">${escHtml(reason)}: ${qty}</span>`).join("")}
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>Date</th><th>Item</th><th>Category</th><th>Qty</th><th>Reason</th><th>Approved By</th><th>Remarks</th></tr></thead>
+      <tbody>${rows.map(r=>{
+        const item = getItem(r.itemId);
+        return `<tr><td>${fmtDate(r.date)}</td><td>${item?escHtml(item.name):'-'}</td><td>${item?CATS[item.category].label:'-'}</td><td class="mono">${r.qty}</td><td><span class="badge badge-danger">${escHtml(r.reason)}</span></td><td>${escHtml(r.approvedBy||'-')}</td><td>${escHtml(r.remarks||'-')}</td></tr>`;
+      }).join("")}</tbody></table></div>`;
   }
   if(reportTab==="stockregister"){
     if(!DB.items.length) return emptyState("No items in Item Master yet.");
@@ -1296,6 +1543,12 @@ function exportReport(){
   } else if(reportTab==="expiry"){
     rows.push(["Item","Batch","Expiry Date"]);
     DB.incoming.filter(r=>r.expiryDate).forEach(r=>rows.push([getItem(r.itemId)?.name||'',r.batchNo||'',r.expiryDate]));
+  } else if(reportTab==="scrapreport"){
+    rows.push(["Date","Item","Category","Qty","Reason","Approved By","Remarks"]);
+    DB.scrap.filter(r=>inRange(r.date)).forEach(r=>{
+      const item = getItem(r.itemId);
+      rows.push([r.date, item?item.name:'', item?CATS[item.category].label:'', r.qty, r.reason, r.approvedBy||'', r.remarks||'']);
+    });
   } else if(reportTab==="consumption"){
     rows.push(["Department","Item","Total Qty Issued"]);
     const byDept={};
@@ -1495,15 +1748,18 @@ function cleanupOrphanedRecords(){
   const validItemIds = new Set(DB.items.map(i=>i.id));
   const orphanedIncoming = DB.incoming.filter(r=>!validItemIds.has(r.itemId));
   const orphanedOutgoing = DB.outgoing.filter(r=>!validItemIds.has(r.itemId));
-  const total = orphanedIncoming.length + orphanedOutgoing.length;
+  const orphanedScrap = DB.scrap.filter(r=>!validItemIds.has(r.itemId));
+  const total = orphanedIncoming.length + orphanedOutgoing.length + orphanedScrap.length;
 
   if(total===0){ toast("No orphaned records found — everything is clean"); return; }
-  if(!confirm(`Found ${orphanedIncoming.length} orphaned inward and ${orphanedOutgoing.length} orphaned outward record(s) pointing to deleted items. Remove them permanently?`)) return;
+  if(!confirm(`Found ${orphanedIncoming.length} orphaned inward, ${orphanedOutgoing.length} orphaned outward, and ${orphanedScrap.length} orphaned scrap record(s) pointing to deleted items. Remove them permanently?`)) return;
 
   orphanedIncoming.forEach(r=>logDeletion("incoming", r));
   orphanedOutgoing.forEach(r=>logDeletion("outgoing", r));
+  orphanedScrap.forEach(r=>logDeletion("scrap", r));
   DB.incoming = DB.incoming.filter(r=>validItemIds.has(r.itemId));
   DB.outgoing = DB.outgoing.filter(r=>validItemIds.has(r.itemId));
+  DB.scrap = DB.scrap.filter(r=>validItemIds.has(r.itemId));
   saveDB(DB);
   toast(`${total} orphaned record(s) removed`);
   renderSettings();
