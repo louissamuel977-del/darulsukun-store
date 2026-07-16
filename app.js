@@ -847,7 +847,7 @@ function deleteOutgoing(id){
    Rooms and caregiver names are pre-fed once; daily use is just
    ticking which rooms need diapers, picking a size, and saving.
    ============================================================ */
-const DIAPER_SIZES = ["M","L","XL"];
+const DIAPER_SIZES = ["S","M","L","XL"];
 let diaperDate = todayStr();
 let diaperTime = new Date().toTimeString().slice(0,5);
 
@@ -888,7 +888,7 @@ function renderDiaperIssue(){
         `<p class="text-dim" style="font-size:12.5px;margin-top:14px;">You have view-only access — ask a Store Keeper or Admin to save issues.</p>`}
     </div>
     <div class="panel">
-      <div class="panel-head"><div class="panel-title">Today's Diaper Issues</div></div>
+      <div class="panel-head"><div class="panel-title">Diaper Issues on ${fmtDate(diaperDate)}</div></div>
       ${todayDiaperRows()}
     </div>
   `;
@@ -898,11 +898,11 @@ function todayDiaperRows(){
   const rows = DB.outgoing.filter(r => r.date===diaperDate && diaperItemIds.includes(r.itemId) && r.purpose==="Diaper Issue - Dormitory")
     .sort((a,b)=> (b.time||"").localeCompare(a.time||""));
   if(rows.length===0) return emptyState("No diaper issues recorded for this date yet.");
-  return `<div class="table-wrap"><table><thead><tr><th>Time</th><th>Room</th><th>Caregiver</th><th>Size</th><th>Qty</th></tr></thead>
+  return `<div class="table-wrap"><table><thead><tr><th>Date</th><th>Time</th><th>Room</th><th>Caregiver</th><th>Size</th><th>Qty</th></tr></thead>
     <tbody>${rows.map(r=>{
       const item = getItem(r.itemId);
       const size = item ? item.name.replace("Diapers ","") : "-";
-      return `<tr><td>${escHtml(r.time||'-')}</td><td>${escHtml(r.department)}</td><td>${escHtml(r.receiverName)}</td><td><span class="badge badge-dp">${size}</span></td><td class="mono">${r.qty}</td></tr>`;
+      return `<tr><td>${fmtDate(r.date)}</td><td>${escHtml(r.time||'-')}</td><td>${escHtml(r.department)}</td><td>${escHtml(r.receiverName)}</td><td><span class="badge badge-dp">${size}</span></td><td class="mono">${r.qty}</td></tr>`;
     }).join("")}</tbody></table></div>`;
 }
 function saveDiaperIssue(){
@@ -968,6 +968,7 @@ function renderReports(){
             <option value="purchasing" ${reportTab==='purchasing'?'selected':''}>Purchasing Report</option>
             <option value="expiry" ${reportTab==='expiry'?'selected':''}>Expired / Near-Expiry Report</option>
             <option value="stockregister" ${reportTab==='stockregister'?'selected':''}>Full Stock Register</option>
+            <option value="diaperreport" ${reportTab==='diaperreport'?'selected':''}>Diaper Issue Report (by Size)</option>
           </select>
         </div>
         <div class="field"><label>From</label><input type="date" value="${reportRange.from}" onchange="reportRange.from=this.value;renderReports()"></div>
@@ -1039,7 +1040,34 @@ function buildReport(){
     return `<div class="table-wrap"><table><thead><tr><th>Code</th><th>Item</th><th>Category</th><th>Unit</th><th>Current Stock</th><th>Reorder Level</th></tr></thead>
       <tbody>${DB.items.map(it=>`<tr><td class="mono">${itemCode(it.category,it.seq)}</td><td>${escHtml(it.name)}</td><td>${CATS[it.category].label}</td><td>${escHtml(it.unit)}</td><td class="mono">${stockOf(it.id)}</td><td class="mono">${it.reorderLevel}</td></tr>`).join("")}</tbody></table></div>`;
   }
+  if(reportTab==="diaperreport"){
+    return buildDiaperReportTable();
+  }
   return "";
+}
+function diaperReportData(){
+  const diaperItems = DB.items.filter(i=>i.category==="diapers");
+  const rows = DB.outgoing.filter(r => inRange(r.date) && diaperItems.some(it=>it.id===r.itemId));
+  const byDate = {};
+  rows.forEach(r=>{
+    const item = diaperItems.find(it=>it.id===r.itemId);
+    const size = item ? item.name.replace("Diapers ","").trim() : "?";
+    byDate[r.date] = byDate[r.date] || { S:0, M:0, L:0, XL:0 };
+    if(byDate[r.date][size] !== undefined) byDate[r.date][size] += Number(r.qty);
+  });
+  return Object.keys(byDate).sort().reverse().map(date => ({
+    date, ...byDate[date],
+    total: byDate[date].S + byDate[date].M + byDate[date].L + byDate[date].XL
+  }));
+}
+function buildDiaperReportTable(){
+  const data = diaperReportData();
+  if(!data.length) return emptyState("No diaper issues recorded in this date range.");
+  const grandTotal = data.reduce((s,d)=>s+d.total,0);
+  return `
+    <div style="margin-bottom:10px;color:var(--gold-400);font-weight:600;">Total Diapers Issued: ${grandTotal}</div>
+    <div class="table-wrap"><table><thead><tr><th>Date</th><th>S Qty</th><th>M Qty</th><th>L Qty</th><th>XL Qty</th><th>Total Qty</th></tr></thead>
+    <tbody>${data.map(d=>`<tr><td>${fmtDate(d.date)}</td><td class="mono">${d.S}</td><td class="mono">${d.M}</td><td class="mono">${d.L}</td><td class="mono">${d.XL}</td><td class="mono"><b>${d.total}</b></td></tr>`).join("")}</tbody></table></div>`;
 }
 function exportReport(){
   let rows = [];
@@ -1053,6 +1081,9 @@ function exportReport(){
   } else if(reportTab==="stockregister"){
     rows.push(["Code","Item","Category","Unit","Current Stock","Reorder Level"]);
     DB.items.forEach(it=>rows.push([itemCode(it.category,it.seq),it.name,CATS[it.category].label,it.unit,stockOf(it.id),it.reorderLevel]));
+  } else if(reportTab==="diaperreport"){
+    rows.push(["Date","S Qty","M Qty","L Qty","XL Qty","Total Qty"]);
+    diaperReportData().forEach(d=>rows.push([d.date,d.S,d.M,d.L,d.XL,d.total]));
   } else if(reportTab==="donation"){
     rows.push(["Date","Item","Donor","Qty"]);
     DB.incoming.filter(r=>r.sourceType==="Donation"&&inRange(r.date)).forEach(r=>rows.push([r.date,getItem(r.itemId)?.name||'',r.donorVendor||'',r.qty]));
