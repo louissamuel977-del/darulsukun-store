@@ -498,8 +498,8 @@ function openItemForm(id){
         <input type="number" id="f_reorder" value="${item?item.reorderLevel:0}" min="0"></div>
     </div>
     <div class="form-actions">
-      <button class="btn btn-gold" onclick="saveItem('${id||''}')">Save Item</button>
-      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-gold btn-sm" onclick="saveItem('${id||''}')">Save Item</button>
+      <button class="btn btn-ghost btn-sm" onclick="closeModal()">Cancel</button>
     </div>
   `);
 }
@@ -640,8 +640,8 @@ function openIncomingForm(id){
     </div>
     <div class="field" style="margin-bottom:14px;"><label>Remarks</label><input type="text" id="f_remarks" value="${row?escHtml(row.remarks||''):''}"></div>
     <div class="form-actions">
-      <button class="btn btn-gold" onclick="saveIncoming('${id||''}')">Save Entry</button>
-      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-gold btn-sm" onclick="saveIncoming('${id||''}')">Save Entry</button>
+      <button class="btn btn-ghost btn-sm" onclick="closeModal()">Cancel</button>
     </div>
   `);
   calcTotal();
@@ -783,8 +783,8 @@ function openOutgoingForm(id){
       </div>
     </div>
     <div class="form-actions">
-      <button class="btn btn-gold" onclick="saveOutgoing('${id||''}')">Save Entry</button>
-      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-gold btn-sm" onclick="saveOutgoing('${id||''}')">Save Entry</button>
+      <button class="btn btn-ghost btn-sm" onclick="closeModal()">Cancel</button>
     </div>
   `);
   showStockHint();
@@ -1246,8 +1246,8 @@ function openUserForm(username){
         <input type="text" id="u_pass" placeholder="${user?'••••••':'Set a password'}"></div>
     </div>
     <div class="form-actions">
-      <button class="btn btn-gold" onclick="saveUser('${username||''}')">Save User</button>
-      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-gold btn-sm" onclick="saveUser('${username||''}')">Save User</button>
+      <button class="btn btn-ghost btn-sm" onclick="closeModal()">Cancel</button>
     </div>
   `);
 }
