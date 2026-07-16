@@ -24,7 +24,9 @@ const ICONS = {
   edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>',
   download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>',
-  upload: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>'
+  upload: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>',
+  diaper: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16M4 5c0 7 1.5 11 8 14 6.5-3 8-7 8-14M9 11c1 1.5 2 2 3 2s2-.5 3-2"/></svg>',
+  check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg>'
 };
 
 function defaultDB(){
@@ -33,6 +35,7 @@ function defaultDB(){
       { username: "admin", name: "Administrator", role: "admin", pass: "admin123" }
     ],
     departments: ["Special Children Section","Kitchen / Dastarkhwan","Medical Room","Admin Office","Boys Hostel","Girls Hostel","Laundry","Maintenance"],
+    dormRooms: Array.from({length:12}, (_,i)=>({ id:"room_"+(i+1), name:"Room "+(i+1), caregiver:"" })),
     items: [],
     incoming: [],
     outgoing: [],
@@ -56,6 +59,7 @@ function sanitizeDB(raw){
   const db = {
     users: toArray(raw.users).length ? toArray(raw.users) : base.users,
     departments: toArray(raw.departments).length ? toArray(raw.departments) : base.departments,
+    dormRooms: toArray(raw.dormRooms).length ? toArray(raw.dormRooms) : base.dormRooms,
     items: toArray(raw.items),
     incoming: toArray(raw.incoming),
     outgoing: toArray(raw.outgoing),
@@ -208,6 +212,7 @@ const NAV_ITEMS = [
   { id:"items", label:"Item Master", icon:"items" },
   { id:"incoming", label:"Inward Entry", icon:"incoming" },
   { id:"outgoing", label:"Outward Entry", icon:"outgoing" },
+  { id:"diapers", label:"Diaper Issue", icon:"diaper" },
   { id:"reports", label:"Reports", icon:"reports" },
   { id:"departments", label:"Departments", icon:"departments" },
   { id:"settings", label:"Settings", icon:"settings" }
@@ -228,6 +233,7 @@ function goTo(page){
     items: renderItems,
     incoming: renderIncoming,
     outgoing: renderOutgoing,
+    diapers: renderDiaperIssue,
     reports: renderReports,
     departments: renderDepartments,
     settings: renderSettings
@@ -834,6 +840,113 @@ function deleteOutgoing(id){
   saveDB(DB);
   toast("Entry deleted");
   renderOutgoing();
+}
+
+/* ============================================================
+   DIAPER ISSUE — QUICK TICK-SHEET FOR 12 DORMITORY ROOMS
+   Rooms and caregiver names are pre-fed once; daily use is just
+   ticking which rooms need diapers, picking a size, and saving.
+   ============================================================ */
+const DIAPER_SIZES = ["M","L","XL"];
+let diaperDate = todayStr();
+let diaperTime = new Date().toTimeString().slice(0,5);
+
+function findOrCreateDiaperItem(size){
+  let item = DB.items.find(i => i.category==="diapers" && i.name.trim().toLowerCase() === ("diapers "+size).toLowerCase());
+  if(item) return item;
+  const seq = uid("item");
+  item = { id:"itm_"+Date.now()+"_"+size, seq, name:"Diapers "+size, category:"diapers", unit:"pcs", reorderLevel:20 };
+  DB.items.push(item);
+  return item;
+}
+
+function renderDiaperIssue(){
+  const main = document.getElementById("mainContent");
+  main.innerHTML = `
+    ${topbarHtml("Diaper Issue","Quick tick-sheet for the 12 dormitory rooms")}
+    <div class="panel">
+      <div class="form-grid" style="margin-bottom:18px;max-width:500px;">
+        <div class="field"><label>Date</label><input type="date" id="dp_date" value="${diaperDate}" onchange="diaperDate=this.value"></div>
+        <div class="field"><label>Time</label><input type="time" id="dp_time" value="${diaperTime}" onchange="diaperTime=this.value"></div>
+      </div>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th style="width:40px;">Issue</th><th>Room</th><th>Caregiver Name</th><th>Size</th><th>Qty</th></tr></thead>
+        <tbody>
+          ${DB.dormRooms.map((r,i)=>`
+            <tr>
+              <td><input type="checkbox" id="dp_tick_${i}" style="width:18px;height:18px;accent-color:var(--gold-500);cursor:pointer;"></td>
+              <td>${canEdit()?`<input type="text" id="dp_room_${i}" value="${escHtml(r.name)}" style="width:120px;padding:6px 8px;">`:`<b>${escHtml(r.name)}</b>`}</td>
+              <td><input type="text" id="dp_caregiver_${i}" value="${escHtml(r.caregiver||'')}" placeholder="Caregiver name" style="width:170px;padding:6px 8px;"></td>
+              <td><select id="dp_size_${i}" style="width:80px;padding:6px 8px;">${DIAPER_SIZES.map(s=>`<option value="${s}" ${s==='M'?'selected':''}>${s}</option>`).join("")}</select></td>
+              <td><input type="number" id="dp_qty_${i}" value="1" min="1" style="width:70px;padding:6px 8px;"></td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+      </div>
+      ${canEdit()?`<div class="form-actions"><button class="btn btn-gold" onclick="saveDiaperIssue()">${ICONS.check} Save Ticked Rooms</button></div>`:
+        `<p class="text-dim" style="font-size:12.5px;margin-top:14px;">You have view-only access — ask a Store Keeper or Admin to save issues.</p>`}
+    </div>
+    <div class="panel">
+      <div class="panel-head"><div class="panel-title">Today's Diaper Issues</div></div>
+      ${todayDiaperRows()}
+    </div>
+  `;
+}
+function todayDiaperRows(){
+  const diaperItemIds = DB.items.filter(i=>i.category==="diapers").map(i=>i.id);
+  const rows = DB.outgoing.filter(r => r.date===diaperDate && diaperItemIds.includes(r.itemId) && r.purpose==="Diaper Issue - Dormitory")
+    .sort((a,b)=> (b.time||"").localeCompare(a.time||""));
+  if(rows.length===0) return emptyState("No diaper issues recorded for this date yet.");
+  return `<div class="table-wrap"><table><thead><tr><th>Time</th><th>Room</th><th>Caregiver</th><th>Size</th><th>Qty</th></tr></thead>
+    <tbody>${rows.map(r=>{
+      const item = getItem(r.itemId);
+      const size = item ? item.name.replace("Diapers ","") : "-";
+      return `<tr><td>${escHtml(r.time||'-')}</td><td>${escHtml(r.department)}</td><td>${escHtml(r.receiverName)}</td><td><span class="badge badge-dp">${size}</span></td><td class="mono">${r.qty}</td></tr>`;
+    }).join("")}</tbody></table></div>`;
+}
+function saveDiaperIssue(){
+  const date = document.getElementById("dp_date").value || todayStr();
+  const time = document.getElementById("dp_time").value || new Date().toTimeString().slice(0,5);
+  let savedCount = 0;
+
+  DB.dormRooms.forEach((room, i)=>{
+    const tick = document.getElementById(`dp_tick_${i}`).checked;
+    const roomNameInput = document.getElementById(`dp_room_${i}`);
+    const roomName = roomNameInput ? roomNameInput.value.trim() : room.name;
+    const caregiver = document.getElementById(`dp_caregiver_${i}`).value.trim();
+    const size = document.getElementById(`dp_size_${i}`).value;
+    const qty = Number(document.getElementById(`dp_qty_${i}`).value) || 0;
+
+    // Persist room name / caregiver edits either way, so they're pre-filled next time.
+    room.name = roomName || room.name;
+    room.caregiver = caregiver;
+
+    if(!tick) return;
+    if(qty<=0){ return; }
+    if(!caregiver){ toast(`${roomName}: caregiver name is required to issue`, true); return; }
+
+    const item = findOrCreateDiaperItem(size);
+    uid("outgoing");
+    DB.outgoing.push({
+      id: "out_"+Date.now()+"_"+i,
+      date, time,
+      itemId: item.id,
+      qty,
+      department: roomName,
+      receiverName: caregiver,
+      purpose: "Diaper Issue - Dormitory",
+      approvedBy: CURRENT_USER.name,
+      received: true,
+      enteredBy: CURRENT_USER.name
+    });
+    savedCount++;
+  });
+
+  saveDB(DB);
+  if(savedCount>0){ toast(`${savedCount} room(s) recorded`); }
+  else { toast("No rooms were ticked", true); }
+  renderDiaperIssue();
 }
 
 /* ============================================================
