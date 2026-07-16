@@ -1093,14 +1093,34 @@ function diaperReportData(){
     total: byDate[date].S + byDate[date].M + byDate[date].L + byDate[date].XL
   }));
 }
+function diaperDetailData(){
+  const diaperItems = DB.items.filter(i=>i.category==="diapers");
+  const diaperItemIds = diaperItems.map(i=>i.id);
+  const rows = DB.outgoing.filter(r => inRange(r.date) && diaperItemIds.includes(r.itemId) && r.purpose==="Diaper Issue - Dormitory");
+  const groups = {};
+  rows.forEach(r=>{
+    const key = r.batchId || `${r.date}|${r.time||''}|${r.department}|${r.receiverName}`;
+    if(!groups[key]) groups[key] = { date:r.date, time:r.time||'-', department:r.department, receiverName:r.receiverName, S:0, M:0, L:0, XL:0 };
+    const item = diaperItems.find(it=>it.id===r.itemId);
+    const size = item ? item.name.replace("Diapers ","").trim() : "";
+    if(groups[key][size] !== undefined) groups[key][size] += Number(r.qty);
+  });
+  return Object.values(groups)
+    .map(g => ({...g, total: g.S+g.M+g.L+g.XL}))
+    .sort((a,b)=> (b.date+b.time).localeCompare(a.date+a.time));
+}
 function buildDiaperReportTable(){
   const data = diaperReportData();
+  const detail = diaperDetailData();
   if(!data.length) return emptyState("No diaper issues recorded in this date range.");
   const grandTotal = data.reduce((s,d)=>s+d.total,0);
   return `
     <div style="margin-bottom:10px;color:var(--gold-400);font-weight:600;">Total Diapers Issued: ${grandTotal}</div>
     <div class="table-wrap"><table><thead><tr><th>Date</th><th>S Qty</th><th>M Qty</th><th>L Qty</th><th>XL Qty</th><th>Total Qty</th></tr></thead>
-    <tbody>${data.map(d=>`<tr><td>${fmtDate(d.date)}</td><td class="mono">${d.S}</td><td class="mono">${d.M}</td><td class="mono">${d.L}</td><td class="mono">${d.XL}</td><td class="mono"><b>${d.total}</b></td></tr>`).join("")}</tbody></table></div>`;
+    <tbody>${data.map(d=>`<tr><td>${fmtDate(d.date)}</td><td class="mono">${d.S}</td><td class="mono">${d.M}</td><td class="mono">${d.L}</td><td class="mono">${d.XL}</td><td class="mono"><b>${d.total}</b></td></tr>`).join("")}</tbody></table></div>
+    <div class="panel-title" style="margin:22px 0 12px;">Detailed Log (by Room)</div>
+    <div class="table-wrap"><table><thead><tr><th>Date</th><th>Time</th><th>Room</th><th>Caregiver</th><th>S</th><th>M</th><th>L</th><th>XL</th><th>Total</th></tr></thead>
+    <tbody>${detail.map(g=>`<tr><td>${fmtDate(g.date)}</td><td>${escHtml(g.time)}</td><td>${escHtml(g.department)}</td><td>${escHtml(g.receiverName)}</td><td class="mono">${g.S||'-'}</td><td class="mono">${g.M||'-'}</td><td class="mono">${g.L||'-'}</td><td class="mono">${g.XL||'-'}</td><td class="mono"><b>${g.total}</b></td></tr>`).join("")}</tbody></table></div>`;
 }
 function exportReport(){
   let rows = [];
@@ -1115,8 +1135,12 @@ function exportReport(){
     rows.push(["Code","Item","Category","Unit","Current Stock","Reorder Level"]);
     DB.items.forEach(it=>rows.push([itemCode(it.category,it.seq),it.name,CATS[it.category].label,it.unit,stockOf(it.id),it.reorderLevel]));
   } else if(reportTab==="diaperreport"){
+    rows.push(["SUMMARY BY DATE"]);
     rows.push(["Date","S Qty","M Qty","L Qty","XL Qty","Total Qty"]);
     diaperReportData().forEach(d=>rows.push([d.date,d.S,d.M,d.L,d.XL,d.total]));
+    rows.push([]); rows.push(["DETAILED LOG BY ROOM"]);
+    rows.push(["Date","Time","Room","Caregiver","S","M","L","XL","Total"]);
+    diaperDetailData().forEach(g=>rows.push([g.date,g.time,g.department,g.receiverName,g.S,g.M,g.L,g.XL,g.total]));
   } else if(reportTab==="donation"){
     rows.push(["Date","Item","Donor","Qty"]);
     DB.incoming.filter(r=>r.sourceType==="Donation"&&inRange(r.date)).forEach(r=>rows.push([r.date,getItem(r.itemId)?.name||'',r.donorVendor||'',r.qty]));
