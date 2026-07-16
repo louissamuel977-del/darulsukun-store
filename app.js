@@ -39,6 +39,8 @@ function defaultDB(){
     items: [],
     incoming: [],
     outgoing: [],
+    deletionLog: [],
+    auditPin: "1955",
     seq: { item: 0, incoming: 0, outgoing: 0 }
   };
 }
@@ -63,6 +65,8 @@ function sanitizeDB(raw){
     items: toArray(raw.items),
     incoming: toArray(raw.incoming),
     outgoing: toArray(raw.outgoing),
+    deletionLog: toArray(raw.deletionLog),
+    auditPin: (typeof raw.auditPin === "string" && raw.auditPin) ? raw.auditPin : base.auditPin,
     seq: (raw.seq && typeof raw.seq === "object") ? {
       item: Number(raw.seq.item)||0,
       incoming: Number(raw.seq.incoming)||0,
@@ -525,8 +529,92 @@ function saveItem(id){
   closeModal();
   renderItems();
 }
+/* ============================================================
+   HIDDEN AUDIT LOG — deletion history, only reachable via a
+   keyboard shortcut (Ctrl+Alt+D) and a PIN. Not linked anywhere
+   in the visible UI on purpose.
+   ============================================================ */
+document.addEventListener("keydown", function(e){
+  if(e.ctrlKey && e.altKey && (e.key==="d" || e.key==="D")){
+    if(CURRENT_USER) openAuditPinPrompt();
+  }
+});
+function openAuditPinPrompt(){
+  openModal(`
+    <div class="modal-head"><div class="modal-title">Audit Access</div><button class="modal-close" onclick="closeModal()">&times;</button></div>
+    <div class="field" style="margin-bottom:14px;"><label>Enter PIN</label>
+      <input type="password" id="auditPinInput" placeholder="••••" onkeydown="if(event.key==='Enter')checkAuditPin()"></div>
+    <div class="form-actions">
+      <button class="btn btn-gold btn-sm" onclick="checkAuditPin()">Unlock</button>
+      <button class="btn btn-ghost btn-sm" onclick="closeModal()">Cancel</button>
+    </div>
+  `);
+  setTimeout(()=>document.getElementById("auditPinInput")?.focus(), 50);
+}
+function checkAuditPin(){
+  const val = document.getElementById("auditPinInput").value;
+  if(val !== DB.auditPin){ toast("Incorrect PIN", true); return; }
+  renderAuditLog();
+}
+function renderAuditLog(){
+  const log = [...DB.deletionLog].sort((a,b)=> new Date(b.deletedAt)-new Date(a.deletedAt));
+  openModal(`
+    <div class="modal-head"><div class="modal-title">Deletion History <span class="count" style="color:var(--gold-400);font-size:13px;">(${log.length})</span></div><button class="modal-close" onclick="closeModal()">&times;</button></div>
+    ${isAdmin()?`
+    <div class="field" style="margin-bottom:14px;"><label>Change Audit PIN</label>
+      <div style="display:flex;gap:8px;">
+        <input type="text" id="newAuditPin" placeholder="New PIN">
+        <button class="btn btn-ghost btn-sm" onclick="changeAuditPin()">Update</button>
+      </div>
+    </div>` : ""}
+    <div style="max-height:50vh;overflow-y:auto;">
+    ${log.length===0 ? emptyState("No deletions recorded yet.") : log.map(l=>`
+      <div class="alert-item" style="align-items:flex-start;flex-direction:column;gap:6px;">
+        <div style="display:flex;justify-content:space-between;width:100%;">
+          <span class="badge ${l.type==='item'?'badge-hh':l.type==='incoming'?'badge-ok':'badge-warn'}">${l.type.toUpperCase()}</span>
+          <span class="mono text-dim" style="font-size:11px;">${new Date(l.deletedAt).toLocaleString("en-GB")}</span>
+        </div>
+        <div style="font-size:12.5px;">${describeDeletedRecord(l)}</div>
+        <div style="font-size:11.5px;color:var(--ink-faint);">Deleted by: ${escHtml(l.deletedBy)}</div>
+      </div>
+    `).join("")}
+    </div>
+    <div class="form-actions"><button class="btn btn-ghost btn-sm" onclick="closeModal()">Close</button></div>
+  `);
+}
+function describeDeletedRecord(l){
+  const d = l.data;
+  if(l.type==="item") return `<b>${escHtml(d.name)}</b> — ${CATS[d.category]?CATS[d.category].label:d.category}, unit: ${escHtml(d.unit)}`;
+  if(l.type==="incoming"){
+    const itemName = getItem(d.itemId)?.name || d.itemId;
+    return `<b>${escHtml(itemName)}</b> — ${d.sourceType}, qty ${d.qty}, ${fmtDate(d.date)}${d.donorVendor?', from '+escHtml(d.donorVendor):''}`;
+  }
+  if(l.type==="outgoing"){
+    const itemName = getItem(d.itemId)?.name || d.itemId;
+    return `<b>${escHtml(itemName)}</b> — qty ${d.qty}, to ${escHtml(d.department)}, receiver ${escHtml(d.receiverName)}, ${fmtDate(d.date)}`;
+  }
+  return "Unknown record";
+}
+function changeAuditPin(){
+  const val = document.getElementById("newAuditPin").value.trim();
+  if(!val){ toast("PIN cannot be empty", true); return; }
+  DB.auditPin = val;
+  saveDB(DB);
+  toast("Audit PIN updated");
+  renderAuditLog();
+}
+function logDeletion(type, data){
+  DB.deletionLog.push({
+    id: "del_"+Date.now()+"_"+Math.random().toString(36).slice(2,7),
+    type, data,
+    deletedBy: CURRENT_USER.name,
+    deletedAt: new Date().toISOString()
+  });
+}
 function deleteItem(id){
   if(!confirm("Delete this item? This cannot be undone.")) return;
+  const item = getItem(id);
+  if(item) logDeletion("item", item);
   DB.items = DB.items.filter(i=>i.id!==id);
   saveDB(DB);
   toast("Item deleted");
@@ -692,6 +780,8 @@ function saveIncoming(id){
 }
 function deleteIncoming(id){
   if(!confirm("Delete this incoming entry?")) return;
+  const row = DB.incoming.find(r=>r.id===id);
+  if(row) logDeletion("incoming", row);
   DB.incoming = DB.incoming.filter(r=>r.id!==id);
   saveDB(DB);
   toast("Entry deleted");
@@ -877,6 +967,8 @@ function saveOutgoing(id){
 }
 function deleteOutgoing(id){
   if(!confirm("Delete this outgoing entry?")) return;
+  const row = DB.outgoing.find(r=>r.id===id);
+  if(row) logDeletion("outgoing", row);
   DB.outgoing = DB.outgoing.filter(r=>r.id!==id);
   saveDB(DB);
   toast("Entry deleted");
