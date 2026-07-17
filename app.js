@@ -28,7 +28,8 @@ const ICONS = {
   diaper: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16M4 5c0 7 1.5 11 8 14 6.5-3 8-7 8-14M9 11c1 1.5 2 2 3 2s2-.5 3-2"/></svg>',
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg>',
   scrap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6M10 11v6M14 11v6"/></svg>',
-  undo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6M3 13a9 9 0 1 0 3-6.7L3 9"/></svg>'
+  undo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6M3 13a9 9 0 1 0 3-6.7L3 9"/></svg>',
+  maintenance: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L2 19l3 3 7.3-7.3a4 4 0 0 0 5.4-5.4l-2.8 2.8-2-2 2.8-2.8Z"/></svg>'
 };
 
 function defaultDB(){
@@ -42,9 +43,10 @@ function defaultDB(){
     incoming: [],
     outgoing: [],
     scrap: [],
+    maintenance: [],
     deletionLog: [],
     auditPin: "1955",
-    seq: { item: 0, incoming: 0, outgoing: 0, scrap: 0 }
+    seq: { item: 0, incoming: 0, outgoing: 0, scrap: 0, maintenance: 0 }
   };
 }
 
@@ -69,13 +71,15 @@ function sanitizeDB(raw){
     incoming: toArray(raw.incoming),
     outgoing: toArray(raw.outgoing),
     scrap: toArray(raw.scrap),
+    maintenance: toArray(raw.maintenance),
     deletionLog: toArray(raw.deletionLog),
     auditPin: (typeof raw.auditPin === "string" && raw.auditPin) ? raw.auditPin : base.auditPin,
     seq: (raw.seq && typeof raw.seq === "object") ? {
       item: Number(raw.seq.item)||0,
       incoming: Number(raw.seq.incoming)||0,
       outgoing: Number(raw.seq.outgoing)||0,
-      scrap: Number(raw.seq.scrap)||0
+      scrap: Number(raw.seq.scrap)||0,
+      maintenance: Number(raw.seq.maintenance)||0
     } : base.seq
   };
   // Drop any item/entry that isn't a valid object, and fix unknown categories
@@ -87,6 +91,7 @@ function sanitizeDB(raw){
   db.incoming = db.incoming.filter(r => r && typeof r === "object" && r.id);
   db.outgoing = db.outgoing.filter(r => r && typeof r === "object" && r.id);
   db.scrap = db.scrap.filter(r => r && typeof r === "object" && r.id);
+  db.maintenance = db.maintenance.filter(r => r && typeof r === "object" && r.id);
   return db;
 }
 
@@ -224,6 +229,7 @@ const NAV_ITEMS = [
   { id:"outgoing", label:"Outward Entry", icon:"outgoing" },
   { id:"diapers", label:"Diaper Issue", icon:"diaper" },
   { id:"scrap", label:"Scrap / Wastage", icon:"scrap" },
+  { id:"maintenance", label:"Maintenance", icon:"maintenance" },
   { id:"reports", label:"Reports", icon:"reports" },
   { id:"departments", label:"Departments", icon:"departments" },
   { id:"settings", label:"Settings", icon:"settings" }
@@ -246,6 +252,7 @@ function goTo(page){
     outgoing: renderOutgoing,
     diapers: renderDiaperIssue,
     scrap: renderScrap,
+    maintenance: renderMaintenance,
     reports: renderReports,
     departments: renderDepartments,
     settings: renderSettings
@@ -299,14 +306,30 @@ function stockOf(itemId){
   const scr = DB.scrap.filter(r=>r.itemId===itemId).reduce((s,r)=>s+Number(r.qty),0);
   return inn - out - scr;
 }
-function toast(msg, isError){
+function toast(msg, isError, undoFn){
   const host = document.getElementById("toastHost");
   const el = document.createElement("div");
   el.className = "toast";
   if(isError) el.style.borderColor = "var(--danger)";
-  el.textContent = msg;
+  if(undoFn){
+    el.style.display = "flex";
+    el.style.alignItems = "center";
+    el.style.justifyContent = "space-between";
+    el.style.gap = "14px";
+    const span = document.createElement("span");
+    span.textContent = msg;
+    const btn = document.createElement("button");
+    btn.textContent = "Undo";
+    btn.style.cssText = "background:var(--gold-500);color:var(--purple-950);border:none;padding:5px 12px;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;flex-shrink:0;";
+    btn.onclick = ()=>{ undoFn(); el.remove(); };
+    el.appendChild(span);
+    el.appendChild(btn);
+    setTimeout(()=>{ el.remove(); }, 8000);
+  } else {
+    el.textContent = msg;
+    setTimeout(()=>{ el.remove(); }, 3200);
+  }
   host.appendChild(el);
-  setTimeout(()=>{ el.remove(); }, 3200);
 }
 function openModal(html){
   document.getElementById("modalBody").innerHTML = html;
@@ -608,20 +631,27 @@ function renderAuditLog(){
     <div class="form-actions"><button class="btn btn-ghost btn-sm" onclick="closeModal()">Close</button></div>
   `;
 }
-function restoreDeletedRecord(logId){
+function undoMultiple(logIds){
+  return function(){
+    logIds.forEach(id => restoreDeletedRecord(id, true));
+  };
+}
+function restoreDeletedRecord(logId, fromToast){
   const log = DB.deletionLog.find(l=>l.id===logId);
   if(!log) return;
-  if(!confirm(`Restore this ${log.type} record?`)) return;
+  if(!fromToast && !confirm(`Restore this ${log.type} record?`)) return;
 
   if(log.type==="item") DB.items.push(log.data);
   else if(log.type==="incoming") DB.incoming.push(log.data);
   else if(log.type==="outgoing") DB.outgoing.push(log.data);
   else if(log.type==="scrap") DB.scrap.push(log.data);
+  else if(log.type==="maintenance") DB.maintenance.push(log.data);
 
   DB.deletionLog = DB.deletionLog.filter(l=>l.id!==logId);
   saveDB(DB);
   toast("Record restored");
-  renderAuditLog();
+  if(fromToast){ goTo(currentPage); }
+  else { renderAuditLog(); }
 }
 function exportAuditLog(){
   const log = [...DB.deletionLog].sort((a,b)=> new Date(b.deletedAt)-new Date(a.deletedAt));
@@ -688,6 +718,9 @@ function describeDeletedRecord(l){
     const itemName = getItem(d.itemId)?.name || d.description || d.itemId;
     return `<b>${escHtml(itemName)}</b> — qty ${d.qty}, reason: ${escHtml(d.reason)}, ${fmtDate(d.date)}`;
   }
+  if(l.type==="maintenance"){
+    return `<b>${escHtml(d.itemName)}</b> — ${escHtml(d.category)}, ${fmtMoney(d.total)}, ${fmtDate(d.date)}`;
+  }
   return "Unknown record";
 }
 function changeAuditPin(){
@@ -699,12 +732,14 @@ function changeAuditPin(){
   renderAuditLog();
 }
 function logDeletion(type, data){
-  DB.deletionLog.push({
+  const entry = {
     id: "del_"+Date.now()+"_"+Math.random().toString(36).slice(2,7),
     type, data,
     deletedBy: CURRENT_USER.name,
     deletedAt: new Date().toISOString()
-  });
+  };
+  DB.deletionLog.push(entry);
+  return entry.id;
 }
 function deleteItem(id){
   const item = getItem(id);
@@ -718,17 +753,18 @@ function deleteItem(id){
     : "Delete this item? This cannot be undone.";
   if(!confirm(msg)) return;
 
-  if(item) logDeletion("item", item);
-  relatedIncoming.forEach(r=>logDeletion("incoming", r));
-  relatedOutgoing.forEach(r=>logDeletion("outgoing", r));
-  relatedScrap.forEach(r=>logDeletion("scrap", r));
+  const logIds = [];
+  if(item) logIds.push(logDeletion("item", item));
+  relatedIncoming.forEach(r=>logIds.push(logDeletion("incoming", r)));
+  relatedOutgoing.forEach(r=>logIds.push(logDeletion("outgoing", r)));
+  relatedScrap.forEach(r=>logIds.push(logDeletion("scrap", r)));
 
   DB.items = DB.items.filter(i=>i.id!==id);
   DB.incoming = DB.incoming.filter(r=>r.itemId!==id);
   DB.outgoing = DB.outgoing.filter(r=>r.itemId!==id);
   DB.scrap = DB.scrap.filter(r=>r.itemId!==id);
   saveDB(DB);
-  toast(relatedCount>0 ? `Item and ${relatedCount} related record(s) deleted` : "Item deleted");
+  toast(relatedCount>0 ? `Item and ${relatedCount} related record(s) deleted` : "Item deleted", false, undoMultiple(logIds));
   renderItems();
 }
 
@@ -892,10 +928,10 @@ function saveIncoming(id){
 function deleteIncoming(id){
   if(!confirm("Delete this incoming entry?")) return;
   const row = DB.incoming.find(r=>r.id===id);
-  if(row) logDeletion("incoming", row);
+  const logId = row ? logDeletion("incoming", row) : null;
   DB.incoming = DB.incoming.filter(r=>r.id!==id);
   saveDB(DB);
-  toast("Entry deleted");
+  toast("Entry deleted", false, logId ? undoMultiple([logId]) : null);
   renderIncoming();
 }
 
@@ -1079,10 +1115,10 @@ function saveOutgoing(id){
 function deleteOutgoing(id){
   if(!confirm("Delete this outgoing entry?")) return;
   const row = DB.outgoing.find(r=>r.id===id);
-  if(row) logDeletion("outgoing", row);
+  const logId = row ? logDeletion("outgoing", row) : null;
   DB.outgoing = DB.outgoing.filter(r=>r.id!==id);
   saveDB(DB);
-  toast("Entry deleted");
+  toast("Entry deleted", false, logId ? undoMultiple([logId]) : null);
   renderOutgoing();
 }
 
@@ -1385,11 +1421,171 @@ function saveScrap(id){
 function deleteScrap(id){
   if(!confirm("Delete this scrap entry?")) return;
   const row = DB.scrap.find(r=>r.id===id);
-  if(row) logDeletion("scrap", row);
+  const logId = row ? logDeletion("scrap", row) : null;
   DB.scrap = DB.scrap.filter(r=>r.id!==id);
   saveDB(DB);
-  toast("Entry deleted");
+  toast("Entry deleted", false, logId ? undoMultiple([logId]) : null);
   renderScrap();
+}
+
+/* ============================================================
+   MAINTENANCE — repairs, servicing, and upkeep spending. Not
+   tied to store stock; tracks its own costs, vendors, and status.
+   ============================================================ */
+const MAINT_CATEGORIES = ["Electrical","Plumbing","AC / HVAC","Generator","Building / Civil","Furniture","Vehicle","IT / Equipment","Other"];
+let maintFilter = { category:"", status:"", from:"", to:"", q:"" };
+
+function renderMaintenance(){
+  const main = document.getElementById("mainContent");
+  const pending = DB.maintenance.filter(r=>r.status==="Pending");
+  const totalSpend = DB.maintenance.reduce((s,r)=>s+Number(r.total||0),0);
+  main.innerHTML = `
+    ${topbarHtml("Maintenance","Repairs, servicing, and upkeep expenses", canEdit()?`<button class="btn btn-gold btn-sm" onclick="openMaintenanceForm()">${ICONS.plus}New Maintenance Entry</button>`:"")}
+    <div class="grid grid-4" style="margin-bottom:20px;">
+      ${statCard("Total Records","bar-hh",DB.maintenance.length,"maintenance entries")}
+      ${statCard("Total Spend","bar-df",fmtMoney(totalSpend),"all time")}
+      ${statCard("Pending Work","bar-dp",pending.length,"not yet completed")}
+      ${statCard("This Month","bar-st",fmtMoney(DB.maintenance.filter(r=>r.date && r.date.slice(0,7)===todayStr().slice(0,7)).reduce((s,r)=>s+Number(r.total||0),0)),"current month spend")}
+    </div>
+    <div class="panel">
+      <div class="filter-bar">
+        <div class="field"><label>Category</label>
+          <select onchange="maintFilter.category=this.value;renderMaintenance()">
+            <option value="">All</option>
+            ${MAINT_CATEGORIES.map(c=>`<option value="${c}" ${maintFilter.category===c?'selected':''}>${c}</option>`).join("")}
+          </select>
+        </div>
+        <div class="field"><label>Status</label>
+          <select onchange="maintFilter.status=this.value;renderMaintenance()">
+            <option value="">All</option>
+            <option value="Completed" ${maintFilter.status==='Completed'?'selected':''}>Completed</option>
+            <option value="Pending" ${maintFilter.status==='Pending'?'selected':''}>Pending</option>
+          </select>
+        </div>
+        <div class="field"><label>From</label><input type="date" value="${maintFilter.from}" onchange="maintFilter.from=this.value;renderMaintenance()"></div>
+        <div class="field"><label>To</label><input type="date" value="${maintFilter.to}" onchange="maintFilter.to=this.value;renderMaintenance()"></div>
+        <div class="field" style="flex:1;min-width:180px;"><label>Search</label><input type="text" placeholder="Search item/work..." value="${escHtml(maintFilter.q)}" oninput="maintFilter.q=this.value;renderMaintenance()"></div>
+      </div>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Date</th><th>Category</th><th>Item / Work</th><th>Vendor</th><th>Qty</th><th>Rate</th><th>Total</th><th>Status</th><th>Approved By</th>${isAdmin()?'<th>Actions</th>':''}</tr></thead>
+        <tbody>${maintenanceRows()}</tbody>
+      </table>
+      </div>
+    </div>
+  `;
+}
+function maintenanceRows(){
+  let list = [...DB.maintenance].sort((a,b)=>new Date(b.date)-new Date(a.date)).filter(r=>{
+    if(maintFilter.category && r.category!==maintFilter.category) return false;
+    if(maintFilter.status && r.status!==maintFilter.status) return false;
+    if(maintFilter.from && r.date < maintFilter.from) return false;
+    if(maintFilter.to && r.date > maintFilter.to) return false;
+    if(maintFilter.q && !r.itemName.toLowerCase().includes(maintFilter.q.toLowerCase())) return false;
+    return true;
+  });
+  if(list.length===0) return `<tr><td colspan="10">${emptyState("No maintenance records found.")}</td></tr>`;
+  return list.map(r=>`
+    <tr>
+      <td>${fmtDate(r.date)}</td>
+      <td><span class="badge badge-hh">${escHtml(r.category)}</span></td>
+      <td><b>${escHtml(r.itemName)}</b></td>
+      <td>${escHtml(r.vendor||'-')}</td>
+      <td class="mono">${r.qty}</td>
+      <td class="mono">${fmtMoney(r.rate)}</td>
+      <td class="mono"><b>${fmtMoney(r.total)}</b></td>
+      <td>${r.status==='Completed'?'<span class="badge badge-ok">Completed</span>':'<span class="badge badge-warn">Pending</span>'}</td>
+      <td>${escHtml(r.approvedBy||'-')}</td>
+      ${isAdmin()?`<td class="row-actions">
+        <button class="icon-btn" onclick="openMaintenanceForm('${r.id}')">${ICONS.edit}</button>
+        <button class="icon-btn" onclick="deleteMaintenance('${r.id}')">${ICONS.trash}</button>
+      </td>`:''}
+    </tr>`).join("");
+}
+function openMaintenanceForm(id){
+  const row = id ? DB.maintenance.find(r=>r.id===id) : null;
+  openModal(`
+    <div class="modal-head"><div class="modal-title">${row?'Edit Maintenance Entry':'New Maintenance Entry'}</div><button class="modal-close" onclick="closeModal()">&times;</button></div>
+    <div class="form-grid" style="margin-bottom:14px;">
+      <div class="field"><label>Date</label><input type="date" id="m_date" value="${row?row.date:todayStr()}"></div>
+      <div class="field"><label>Category</label>
+        <select id="m_category">${MAINT_CATEGORIES.map(c=>`<option value="${c}" ${row&&row.category===c?'selected':''}>${c}</option>`).join("")}</select>
+      </div>
+      <div class="field"><label>Status</label>
+        <select id="m_status">
+          <option value="Completed" ${!row||row.status==='Completed'?'selected':''}>Completed</option>
+          <option value="Pending" ${row&&row.status==='Pending'?'selected':''}>Pending</option>
+        </select>
+      </div>
+    </div>
+    <div class="field" style="margin-bottom:14px;"><label>Item / Work Description</label>
+      <input type="text" id="m_itemName" value="${row?escHtml(row.itemName):''}" placeholder="e.g. AC gas refill, generator servicing, plumbing repair"></div>
+    <div class="form-grid" style="margin-bottom:6px;">
+      <div class="field"><label>Qty</label><input type="number" id="m_qty" value="${row?row.qty:1}" min="1" oninput="calcMaintTotal()"></div>
+      <div class="field"><label>Rate (per unit)</label><input type="number" id="m_rate" value="${row?row.rate:''}" min="0" oninput="calcMaintTotal()"></div>
+      <div class="field"><label>Total Amount</label><input type="text" id="m_total" value="${row?fmtMoney(row.total):'Rs 0'}" disabled></div>
+    </div>
+    <div class="form-grid" style="margin:10px 0 14px;">
+      <div class="field"><label>Vendor / Contractor</label><input type="text" id="m_vendor" value="${row?escHtml(row.vendor||''):''}"></div>
+      <div class="field"><label>Invoice / Receipt No.</label><input type="text" id="m_invoice" value="${row?escHtml(row.invoiceNo||''):''}"></div>
+      <div class="field"><label>Approved By</label><input type="text" id="m_approved" value="${row?escHtml(row.approvedBy||''):CURRENT_USER.name}"></div>
+    </div>
+    <div class="field" style="margin-bottom:14px;"><label>Next Due Date (for recurring maintenance, optional)</label><input type="date" id="m_nextDue" value="${row?row.nextDue||'':''}"></div>
+    <div class="field" style="margin-bottom:14px;"><label>Remarks</label><input type="text" id="m_remarks" value="${row?escHtml(row.remarks||''):''}"></div>
+    <div class="form-actions">
+      <button class="btn btn-gold btn-sm" onclick="saveMaintenance('${id||''}')">Save Entry</button>
+      <button class="btn btn-ghost btn-sm" onclick="closeModal()">Cancel</button>
+    </div>
+  `);
+  calcMaintTotal();
+}
+function calcMaintTotal(){
+  const qty = Number(document.getElementById("m_qty").value)||0;
+  const rate = Number(document.getElementById("m_rate").value)||0;
+  document.getElementById("m_total").value = fmtMoney(qty*rate);
+}
+function saveMaintenance(id){
+  const itemName = document.getElementById("m_itemName").value.trim();
+  if(!itemName){ toast("Item / work description is required", true); return; }
+  const qty = Number(document.getElementById("m_qty").value)||0;
+  if(qty<=0){ toast("Qty must be greater than 0", true); return; }
+  const rate = Number(document.getElementById("m_rate").value)||0;
+
+  const data = {
+    date: document.getElementById("m_date").value || todayStr(),
+    category: document.getElementById("m_category").value,
+    status: document.getElementById("m_status").value,
+    itemName,
+    qty, rate,
+    total: qty*rate,
+    vendor: document.getElementById("m_vendor").value.trim(),
+    invoiceNo: document.getElementById("m_invoice").value.trim(),
+    approvedBy: document.getElementById("m_approved").value.trim(),
+    nextDue: document.getElementById("m_nextDue").value,
+    remarks: document.getElementById("m_remarks").value.trim(),
+    enteredBy: CURRENT_USER.name
+  };
+  if(id){
+    const row = DB.maintenance.find(r=>r.id===id);
+    Object.assign(row, data);
+    toast("Maintenance entry updated");
+  } else {
+    uid("maintenance");
+    DB.maintenance.push({ id:"mnt_"+Date.now(), ...data });
+    toast("Maintenance entry saved");
+  }
+  saveDB(DB);
+  closeModal();
+  renderMaintenance();
+}
+function deleteMaintenance(id){
+  if(!confirm("Delete this maintenance entry?")) return;
+  const row = DB.maintenance.find(r=>r.id===id);
+  const logId = row ? logDeletion("maintenance", row) : null;
+  DB.maintenance = DB.maintenance.filter(r=>r.id!==id);
+  saveDB(DB);
+  toast("Entry deleted", false, logId ? undoMultiple([logId]) : null);
+  renderMaintenance();
 }
 
 /* ============================================================
@@ -1411,6 +1607,7 @@ function renderReports(){
             <option value="purchasing" ${reportTab==='purchasing'?'selected':''}>Purchasing Report</option>
             <option value="expiry" ${reportTab==='expiry'?'selected':''}>Expired / Near-Expiry Report</option>
             <option value="scrapreport" ${reportTab==='scrapreport'?'selected':''}>Scrap / Wastage Report</option>
+            <option value="maintreport" ${reportTab==='maintreport'?'selected':''}>Maintenance Report</option>
             <option value="stockregister" ${reportTab==='stockregister'?'selected':''}>Full Stock Register</option>
             <option value="diaperreport" ${reportTab==='diaperreport'?'selected':''}>Diaper Issue Report (by Size)</option>
           </select>
@@ -1496,6 +1693,22 @@ function buildReport(){
         const name = item ? item.name : (r.description || "-");
         return `<tr><td>${fmtDate(r.date)}</td><td>${escHtml(r.time||'-')}</td><td>${escHtml(name)}</td><td>${item?CATS[item.category].label:'<span class="text-dim">Not tracked</span>'}</td><td class="mono">${r.qty}</td><td><span class="badge badge-danger">${escHtml(r.reason)}</span></td><td>${r.sold?'Yes':'No'}</td><td class="mono">${r.sold?fmtMoney(r.sellAmount):'-'}</td><td>${escHtml(r.buyerName||'-')}</td><td>${escHtml(r.approvedBy||'-')}</td><td>${escHtml(r.remarks||'-')}</td></tr>`;
       }).join("")}</tbody></table></div>`;
+  }
+  if(reportTab==="maintreport"){
+    const rows = DB.maintenance.filter(r=>inRange(r.date)).sort((a,b)=>new Date(b.date)-new Date(a.date));
+    if(!rows.length) return emptyState("No maintenance records in this date range.");
+    const byCategory = {};
+    let totalSpend = 0;
+    rows.forEach(r=>{ byCategory[r.category] = (byCategory[r.category]||0) + Number(r.total); totalSpend += Number(r.total); });
+    const pendingCount = rows.filter(r=>r.status==="Pending").length;
+    return `
+      <div style="margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        ${Object.entries(byCategory).map(([cat,amt])=>`<span class="badge badge-hh">${escHtml(cat)}: ${fmtMoney(amt)}</span>`).join("")}
+        <span class="badge badge-ok">Total Spend: ${fmtMoney(totalSpend)}</span>
+        ${pendingCount>0?`<span class="badge badge-warn">${pendingCount} Pending</span>`:''}
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>Date</th><th>Category</th><th>Item / Work</th><th>Vendor</th><th>Qty</th><th>Rate</th><th>Total</th><th>Status</th><th>Approved By</th></tr></thead>
+      <tbody>${rows.map(r=>`<tr><td>${fmtDate(r.date)}</td><td><span class="badge badge-hh">${escHtml(r.category)}</span></td><td>${escHtml(r.itemName)}</td><td>${escHtml(r.vendor||'-')}</td><td class="mono">${r.qty}</td><td class="mono">${fmtMoney(r.rate)}</td><td class="mono"><b>${fmtMoney(r.total)}</b></td><td>${r.status==='Completed'?'<span class="badge badge-ok">Completed</span>':'<span class="badge badge-warn">Pending</span>'}</td><td>${escHtml(r.approvedBy||'-')}</td></tr>`).join("")}</tbody></table></div>`;
   }
   if(reportTab==="stockregister"){
     if(!DB.items.length) return emptyState("No items in Item Master yet.");
@@ -1586,6 +1799,9 @@ function exportReport(){
       const name = item ? item.name : (r.description || "");
       rows.push([r.date, r.time||'', name, item?CATS[item.category].label:'', r.qty, r.reason, r.sold?'Yes':'No', r.sold?r.sellAmount:'', r.buyerName||'', r.approvedBy||'', r.remarks||'']);
     });
+  } else if(reportTab==="maintreport"){
+    rows.push(["Date","Category","Item/Work","Vendor","Qty","Rate","Total","Status","Approved By","Invoice #","Remarks"]);
+    DB.maintenance.filter(r=>inRange(r.date)).forEach(r=>rows.push([r.date,r.category,r.itemName,r.vendor||'',r.qty,r.rate,r.total,r.status,r.approvedBy||'',r.invoiceNo||'',r.remarks||'']));
   } else if(reportTab==="consumption"){
     rows.push(["Department","Item","Total Qty Issued"]);
     const byDept={};
