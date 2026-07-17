@@ -215,7 +215,7 @@ function enterApp(){
   document.getElementById("app").style.display = "block";
   document.getElementById("userAvatar").textContent = CURRENT_USER.name.charAt(0).toUpperCase();
   document.getElementById("userNameLabel").textContent = CURRENT_USER.name;
-  document.getElementById("userRoleLabel").textContent = CURRENT_USER.role.replace("storekeeper","Store Keeper").replace("admin","Admin").replace("supervisor","Supervisor");
+  document.getElementById("userRoleLabel").textContent = CURRENT_USER.role.replace("storekeeper","Store Keeper").replace("admin","Admin").replace("supervisor","Supervisor").replace("auditor","Auditor");
   renderNav();
   goTo("dashboard");
 }
@@ -1601,6 +1601,7 @@ function renderReports(){
       <div class="filter-bar">
         <div class="field"><label>Report Type</label>
           <select onchange="reportTab=this.value;renderReports()">
+            <option value="masteraudit" ${reportTab==='masteraudit'?'selected':''}>★ Master Audit Report (Full)</option>
             <option value="daily" ${reportTab==='daily'?'selected':''}>Daily Entry Report</option>
             <option value="consumption" ${reportTab==='consumption'?'selected':''}>Monthly Consumption (by Department)</option>
             <option value="donation" ${reportTab==='donation'?'selected':''}>Donation Report</option>
@@ -1626,6 +1627,9 @@ function inRange(dateStr){
   return (!reportRange.from || dateStr>=reportRange.from) && (!reportRange.to || dateStr<=reportRange.to);
 }
 function buildReport(){
+  if(reportTab==="masteraudit"){
+    return buildMasterAuditReport();
+  }
   if(reportTab==="daily"){
     const inc = DB.incoming.filter(r=>inRange(r.date));
     const out = DB.outgoing.filter(r=>inRange(r.date));
@@ -1720,6 +1724,81 @@ function buildReport(){
   }
   return "";
 }
+function buildMasterAuditReport(){
+  const purchases = DB.incoming.filter(r=>r.sourceType==="Purchasing" && inRange(r.date));
+  const donations = DB.incoming.filter(r=>r.sourceType==="Donation" && inRange(r.date));
+  const totalPurchaseAmt = purchases.reduce((s,r)=>s+Number(r.total||0),0);
+  const totalDonationQty = donations.reduce((s,r)=>s+Number(r.qty||0),0);
+  const scrapInRange = DB.scrap.filter(r=>inRange(r.date));
+  const totalScrapIncome = scrapInRange.filter(r=>r.sold).reduce((s,r)=>s+Number(r.sellAmount||0),0);
+  const maintInRange = DB.maintenance.filter(r=>inRange(r.date));
+  const totalMaintSpend = maintInRange.reduce((s,r)=>s+Number(r.total||0),0);
+  const netOutflow = totalPurchaseAmt + totalMaintSpend - totalScrapIncome;
+
+  const outInRange = DB.outgoing.filter(r=>inRange(r.date));
+  const deletionsInRange = DB.deletionLog.filter(l=>{
+    const d = l.deletedAt.slice(0,10);
+    return inRange(d);
+  });
+  const delCounts = { item:0, incoming:0, outgoing:0, scrap:0, maintenance:0 };
+  deletionsInRange.forEach(l=>{ if(delCounts[l.type]!==undefined) delCounts[l.type]++; });
+
+  const catStock = { household:0, stationery:0, dietfood:0, diapers:0 };
+  DB.items.forEach(it=>{ catStock[it.category] += stockOf(it.id); });
+
+  return `
+    <div style="margin-bottom:22px;padding:14px 16px;background:var(--purple-950);border-radius:8px;border:1px solid var(--line);">
+      <div style="font-size:13px;color:var(--ink-dim);">Report Period: <b style="color:var(--gold-400);">${fmtDate(reportRange.from)} — ${fmtDate(reportRange.to)}</b></div>
+      <div style="font-size:12px;color:var(--ink-faint);margin-top:4px;">Generated: ${new Date().toLocaleString("en-GB")} · By: ${escHtml(CURRENT_USER.name)} (${CURRENT_USER.role})</div>
+    </div>
+
+    <div class="panel-title" style="margin-bottom:12px;">1. Financial Summary</div>
+    <div class="grid grid-4" style="margin-bottom:22px;">
+      ${statCard("Total Purchases","bar-df",fmtMoney(totalPurchaseAmt),purchases.length+" purchase entries")}
+      ${statCard("Donations Received","bar-hh",totalDonationQty,donations.length+" donation entries")}
+      ${statCard("Scrap Sale Income","bar-st",fmtMoney(totalScrapIncome),scrapInRange.filter(r=>r.sold).length+" items sold")}
+      ${statCard("Maintenance Spend","bar-dp",fmtMoney(totalMaintSpend),maintInRange.length+" work orders")}
+    </div>
+    <div style="margin-bottom:22px;padding:14px 16px;background:rgba(212,175,55,0.08);border:1px solid var(--gold-500);border-radius:8px;">
+      <span style="font-size:13.5px;color:var(--ink);">Net Cash Outflow (Purchases + Maintenance − Scrap Income): </span>
+      <b style="color:var(--gold-400);font-size:16px;">${fmtMoney(netOutflow)}</b>
+    </div>
+
+    <div class="panel-title" style="margin-bottom:12px;">2. Current Stock Position (as of today, all categories)</div>
+    <div class="grid grid-4" style="margin-bottom:22px;">
+      ${statCard("Household","bar-hh",catStock.household,"units in store")}
+      ${statCard("Stationery","bar-st",catStock.stationery,"units in store")}
+      ${statCard("Diet & Food","bar-df",catStock.dietfood,"units in store")}
+      ${statCard("Diapers","bar-dp",catStock.diapers,"units in store")}
+    </div>
+
+    <div class="panel-title" style="margin-bottom:12px;">3. Full Stock Reconciliation</div>
+    <div class="table-wrap" style="margin-bottom:22px;"><table><thead><tr><th>Code</th><th>Item</th><th>Category</th><th>Total In</th><th>Total Out</th><th>Total Scrapped</th><th>Current Stock</th></tr></thead>
+      <tbody>${DB.items.length?DB.items.map(it=>{
+        const inn = DB.incoming.filter(r=>r.itemId===it.id).reduce((s,r)=>s+Number(r.qty),0);
+        const out = DB.outgoing.filter(r=>r.itemId===it.id).reduce((s,r)=>s+Number(r.qty),0);
+        const scr = DB.scrap.filter(r=>r.itemId===it.id).reduce((s,r)=>s+Number(r.qty),0);
+        return `<tr><td class="mono">${itemCode(it.category,it.seq)}</td><td>${escHtml(it.name)}</td><td>${CATS[it.category].label}</td><td class="mono">${inn}</td><td class="mono">${out}</td><td class="mono">${scr}</td><td class="mono"><b>${stockOf(it.id)}</b></td></tr>`;
+      }).join(""):`<tr><td colspan="7">${emptyState("No items in Item Master")}</td></tr>`}</tbody></table></div>
+
+    <div class="panel-title" style="margin-bottom:12px;">4. Transactions in Period</div>
+    <div class="grid grid-4" style="margin-bottom:22px;">
+      ${statCard("Inward Entries","bar-hh",purchases.length+donations.length,"purchases + donations")}
+      ${statCard("Outward Entries","bar-warn",outInRange.length,"issued to departments")}
+      ${statCard("Scrap Entries","bar-df",scrapInRange.length,"written off")}
+      ${statCard("Maintenance Entries","bar-dp",maintInRange.length,"work orders")}
+    </div>
+
+    <div class="panel-title" style="margin-bottom:12px;">5. Data Integrity — Record Deletions in Period</div>
+    <div style="margin-bottom:10px;font-size:12.5px;color:var(--ink-dim);">This system logs every deletion for accountability. Counts below are for this period only.</div>
+    <div class="grid grid-4" style="margin-bottom:10px;">
+      ${statCard("Items Deleted","bar-hh",delCounts.item,"")}
+      ${statCard("Inward Deleted","bar-st",delCounts.incoming,"")}
+      ${statCard("Outward Deleted","bar-warn",delCounts.outgoing,"")}
+      ${statCard("Scrap/Maint. Deleted","bar-dp",delCounts.scrap+delCounts.maintenance,"")}
+    </div>
+  `;
+}
 function diaperReportData(){
   const diaperItems = DB.items.filter(i=>i.category==="diapers");
   const rows = DB.outgoing.filter(r => inRange(r.date) && diaperItems.some(it=>it.id===r.itemId));
@@ -1766,6 +1845,34 @@ function buildDiaperReportTable(){
 }
 function exportReport(){
   let rows = [];
+  if(reportTab==="masteraudit"){
+    const purchases = DB.incoming.filter(r=>r.sourceType==="Purchasing" && inRange(r.date));
+    const donations = DB.incoming.filter(r=>r.sourceType==="Donation" && inRange(r.date));
+    const totalPurchaseAmt = purchases.reduce((s,r)=>s+Number(r.total||0),0);
+    const scrapInRange = DB.scrap.filter(r=>inRange(r.date));
+    const totalScrapIncome = scrapInRange.filter(r=>r.sold).reduce((s,r)=>s+Number(r.sellAmount||0),0);
+    const maintInRange = DB.maintenance.filter(r=>inRange(r.date));
+    const totalMaintSpend = maintInRange.reduce((s,r)=>s+Number(r.total||0),0);
+    rows.push(["MASTER AUDIT REPORT"]);
+    rows.push(["Period", fmtDate(reportRange.from), "to", fmtDate(reportRange.to)]);
+    rows.push([]); rows.push(["FINANCIAL SUMMARY"]);
+    rows.push(["Total Purchases (Rs)", totalPurchaseAmt]);
+    rows.push(["Total Donations (Qty)", donations.reduce((s,r)=>s+Number(r.qty||0),0)]);
+    rows.push(["Total Scrap Sale Income (Rs)", totalScrapIncome]);
+    rows.push(["Total Maintenance Spend (Rs)", totalMaintSpend]);
+    rows.push(["Net Cash Outflow (Rs)", totalPurchaseAmt + totalMaintSpend - totalScrapIncome]);
+    rows.push([]); rows.push(["STOCK RECONCILIATION"]);
+    rows.push(["Code","Item","Category","Total In","Total Out","Total Scrapped","Current Stock"]);
+    DB.items.forEach(it=>{
+      const inn = DB.incoming.filter(r=>r.itemId===it.id).reduce((s,r)=>s+Number(r.qty),0);
+      const out = DB.outgoing.filter(r=>r.itemId===it.id).reduce((s,r)=>s+Number(r.qty),0);
+      const scr = DB.scrap.filter(r=>r.itemId===it.id).reduce((s,r)=>s+Number(r.qty),0);
+      rows.push([itemCode(it.category,it.seq), it.name, CATS[it.category].label, inn, out, scr, stockOf(it.id)]);
+    });
+    downloadCSV(`dus-store-master-audit-${todayStr()}.csv`, rows);
+    toast("Master audit report exported");
+    return;
+  }
   if(reportTab==="daily"){
     rows.push(["INCOMING"]);
     rows.push(["Date","Item","Source","Donor/Vendor","Qty","Rate","Total"]);
@@ -1885,7 +1992,7 @@ function renderSettings(){
           ${DB.users.map(u=>`<tr>
             <td><b>${escHtml(u.name)}</b></td>
             <td class="mono">${escHtml(u.username)}</td>
-            <td><span class="badge badge-ok">${u.role.replace('storekeeper','Store Keeper').replace('admin','Admin').replace('supervisor','Supervisor')}</span></td>
+            <td><span class="badge ${u.role==='auditor'?'badge-warn':'badge-ok'}">${u.role.replace('storekeeper','Store Keeper').replace('admin','Admin').replace('supervisor','Supervisor').replace('auditor','Auditor')}</span></td>
             <td class="row-actions">
               <button class="icon-btn" onclick="openUserForm('${u.username}')">${ICONS.edit}</button>
               ${u.username!==CURRENT_USER.username?`<button class="icon-btn" onclick="deleteUser('${u.username}')">${ICONS.trash}</button>`:''}
@@ -1925,6 +2032,7 @@ function openUserForm(username){
           <option value="admin" ${user&&user.role==='admin'?'selected':''}>Admin</option>
           <option value="storekeeper" ${user&&user.role==='storekeeper'?'selected':''}>Store Keeper</option>
           <option value="supervisor" ${user&&user.role==='supervisor'?'selected':''}>Supervisor</option>
+          <option value="auditor" ${user&&user.role==='auditor'?'selected':''}>Auditor (external, view-only)</option>
         </select>
       </div>
       <div class="field"><label>${user?'New Password (leave blank to keep current)':'Password'}</label>
