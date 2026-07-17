@@ -38,6 +38,13 @@ function defaultDB(){
       { username: "admin", name: "Administrator", role: "admin", pass: "admin123" }
     ],
     departments: ["Special Children Section","Kitchen / Dastarkhwan","Medical Room","Admin Office","Boys Hostel","Girls Hostel","Laundry","Maintenance"],
+    locationGroups: [
+      { name:"Head Office", departments:["Laundry Department","Kitchen Department","Clinic (H.E.U)","Management Office","Rehabilitation","Finance Department","Front Desk (F.D.O) Gate No 2","Maintenance Department","Sister's Room","House Keeping Department","Caregivers","Al-Ameen House","Family Sport"], allowCustom:false },
+      { name:"Lemons Home", departments:[], allowCustom:false },
+      { name:"Dugout", departments:[], allowCustom:false },
+      { name:"Rashdabad", departments:[], allowCustom:false },
+      { name:"Other", departments:["Christ the King Church","Christ the King School","Rosary Convent","Sangard Convent","Baldia Convent","Digroad Convent"], allowCustom:true }
+    ],
     dormRooms: Array.from({length:12}, (_,i)=>({ id:"room_"+(i+1), name:"Room "+(i+1), caregiver:"" })),
     items: [],
     incoming: [],
@@ -66,6 +73,7 @@ function sanitizeDB(raw){
   const db = {
     users: toArray(raw.users).length ? toArray(raw.users) : base.users,
     departments: toArray(raw.departments).length ? toArray(raw.departments) : base.departments,
+    locationGroups: toArray(raw.locationGroups).length ? toArray(raw.locationGroups) : base.locationGroups,
     dormRooms: toArray(raw.dormRooms).length ? toArray(raw.dormRooms) : base.dormRooms,
     items: toArray(raw.items),
     incoming: toArray(raw.incoming),
@@ -357,11 +365,17 @@ function downloadCSV(filename, rows){
    ============================================================ */
 function renderDashboard(){
   const main = document.getElementById("mainContent");
-  const counts = { household:0, stationery:0, dietfood:0, diapers:0 };
+  const counts = { household:0, stationery:0, dietfood:0 };
+  const diaperCounts = { JXL:0, M:0, XL:0 };
   let totalValue = 0;
   DB.items.forEach(it=>{
     const stock = stockOf(it.id);
-    counts[it.category] += stock;
+    if(it.category === "diapers"){
+      const sizeMatch = DIAPER_SIZES.find(s => it.name.trim().toLowerCase() === ("diapers "+s).toLowerCase());
+      if(sizeMatch) diaperCounts[sizeMatch] += stock;
+    } else {
+      counts[it.category] += stock;
+    }
   });
   DB.incoming.forEach(r=>{ totalValue += Number(r.total||0); });
   DB.outgoing.forEach(r=>{
@@ -393,7 +407,9 @@ function renderDashboard(){
       ${statCard("Household Stock","bar-hh",counts.household,"units in store")}
       ${statCard("Stationery Stock","bar-st",counts.stationery,"units in store")}
       ${statCard("Diet & Food Stock","bar-df",counts.dietfood,"units in store")}
-      ${statCard("Diapers Stock","bar-dp",counts.diapers,"units in store")}
+      ${statCard("Diapers — JXL","bar-dp",diaperCounts.JXL,"units in store")}
+      ${statCard("Diapers — M","bar-dp",diaperCounts.M,"units in store")}
+      ${statCard("Diapers — XL","bar-dp",diaperCounts.XL,"units in store")}
     </div>
     <div class="grid grid-2">
       <div class="panel">
@@ -948,7 +964,7 @@ function renderOutgoing(){
         <div class="field"><label>Department</label>
           <select onchange="outgoingFilter.dept=this.value;renderOutgoing()">
             <option value="">All</option>
-            ${DB.departments.map(d=>`<option value="${escHtml(d)}" ${outgoingFilter.dept===d?'selected':''}>${escHtml(d)}</option>`).join("")}
+            ${DB.locationGroups.map(g=>`<optgroup label="${escHtml(g.name)}">${g.departments.map(d=>`<option value="${escHtml(d)}" ${outgoingFilter.dept===d?'selected':''}>${escHtml(d)}</option>`).join("")}</optgroup>`).join("")}
           </select>
         </div>
         <div class="field"><label>From</label><input type="date" value="${outgoingFilter.from}" onchange="outgoingFilter.from=this.value;renderOutgoing()"></div>
@@ -1008,11 +1024,17 @@ function openOutgoingForm(id){
     </div>
     <div class="form-grid" style="margin-bottom:6px;">
       <div class="field"><label>Qty Issued</label><input type="number" id="f_qty" value="${row?row.qty:''}" min="0" oninput="showStockHint()"></div>
-      <div class="field"><label>Department</label>
-        <select id="f_dept">${DB.departments.map(d=>`<option value="${escHtml(d)}" ${row&&row.department===d?'selected':''}>${escHtml(d)}</option>`).join("")}</select>
+      <div class="field"><label>Location</label>
+        <select id="f_locgroup" onchange="updateDeptOptions()">
+          ${DB.locationGroups.map((g,gi)=>`<option value="${gi}">${escHtml(g.name)}</option>`).join("")}
+        </select>
       </div>
-      <div class="field"><label>Receiver Name</label><input type="text" id="f_receiver" value="${row?escHtml(row.receiverName||''):''}"></div>
+      <div class="field"><label>Department</label>
+        <select id="f_dept" onchange="toggleDeptCustom()"></select>
+      </div>
     </div>
+    <div class="field" id="f_dept_custom_wrap" style="display:none;margin-bottom:14px;"><label>Type Department / Institution Name</label><input type="text" id="f_dept_custom" placeholder="e.g. a new convent or partner name"></div>
+    <div class="field" style="margin-bottom:14px;"><label>Receiver Name</label><input type="text" id="f_receiver" value="${row?escHtml(row.receiverName||''):''}"></div>
     <div id="stockHint" style="font-size:12px;color:var(--ink-faint);margin-bottom:14px;"></div>
     <div class="form-grid" style="margin-bottom:14px;">
       <div class="field"><label>Purpose / Reason</label><input type="text" id="f_purpose" value="${row?escHtml(row.purpose||''):''}"></div>
@@ -1027,6 +1049,53 @@ function openOutgoingForm(id){
     </div>
   `);
   showStockHint();
+  initOutgoingDeptFields(row ? row.department : null);
+}
+function findGroupForDept(deptName){
+  for(let gi=0; gi<DB.locationGroups.length; gi++){
+    if(DB.locationGroups[gi].departments.includes(deptName)) return gi;
+  }
+  return -1;
+}
+function populateDeptSelect(groupIndex, selectedDept){
+  const group = DB.locationGroups[groupIndex];
+  let opts = group.departments.map(d=>`<option value="${escHtml(d)}" ${selectedDept===d?'selected':''}>${escHtml(d)}</option>`).join("");
+  if(group.allowCustom){
+    opts += `<option value="__custom__">+ Type a new name...</option>`;
+  }
+  if(!opts){
+    opts = `<option value="__custom__">+ Type a name...</option>`;
+  }
+  document.getElementById("f_dept").innerHTML = opts;
+}
+function updateDeptOptions(){
+  const gi = Number(document.getElementById("f_locgroup").value);
+  populateDeptSelect(gi, null);
+  toggleDeptCustom();
+}
+function toggleDeptCustom(){
+  const val = document.getElementById("f_dept").value;
+  const wrap = document.getElementById("f_dept_custom_wrap");
+  wrap.style.display = val==="__custom__" ? "block" : "none";
+}
+function initOutgoingDeptFields(currentDept){
+  let gi = currentDept ? findGroupForDept(currentDept) : 0;
+  let isCustom = false;
+  if(currentDept && gi<0){
+    gi = DB.locationGroups.findIndex(g=>g.allowCustom);
+    if(gi<0) gi = 0;
+    isCustom = true;
+  }
+  if(gi<0) gi = 0;
+  document.getElementById("f_locgroup").value = gi;
+  populateDeptSelect(gi, isCustom ? null : currentDept);
+  if(isCustom){
+    document.getElementById("f_dept").value = "__custom__";
+    document.getElementById("f_dept_custom_wrap").style.display = "block";
+    document.getElementById("f_dept_custom").value = currentDept;
+  } else {
+    toggleDeptCustom();
+  }
 }
 function outgoingItemChanged(){
   const itemId = document.getElementById("f_item").value;
@@ -1087,11 +1156,22 @@ function saveOutgoing(id){
   if(qty > currentStock){
     if(!confirm(`Warning: only ${currentStock} ${item.unit} in stock. Issue anyway?`)) return;
   }
+  const deptSelectVal = document.getElementById("f_dept").value;
+  let department = deptSelectVal;
+  if(deptSelectVal === "__custom__"){
+    department = document.getElementById("f_dept_custom").value.trim();
+    if(!department){ toast("Please type a department/institution name", true); return; }
+    const gi = Number(document.getElementById("f_locgroup").value);
+    const group = DB.locationGroups[gi];
+    if(group && !group.departments.includes(department)){
+      group.departments.push(department);
+    }
+  }
   const data = {
     date: document.getElementById("f_date").value || todayStr(),
     itemId,
     qty,
-    department: document.getElementById("f_dept").value,
+    department,
     receiverName: document.getElementById("f_receiver").value.trim(),
     purpose: document.getElementById("f_purpose").value.trim(),
     approvedBy: document.getElementById("f_approved").value.trim(),
@@ -1127,7 +1207,7 @@ function deleteOutgoing(id){
    Rooms and caregiver names are pre-fed once; daily use is just
    ticking which rooms need diapers, picking a size, and saving.
    ============================================================ */
-const DIAPER_SIZES = ["S","M","L","XL"];
+const DIAPER_SIZES = ["JXL","M","XL"];
 let diaperDate = todayStr();
 let diaperTime = new Date().toTimeString().slice(0,5);
 
@@ -1151,16 +1231,15 @@ function renderDiaperIssue(){
       </div>
       <div class="table-wrap">
       <table>
-        <thead><tr><th style="width:40px;">Issue</th><th>Room</th><th>Caregiver Name</th><th>S Qty</th><th>M Qty</th><th>L Qty</th><th>XL Qty</th><th>Total</th></tr></thead>
+        <thead><tr><th style="width:40px;">Issue</th><th>Room</th><th>Caregiver Name</th><th>JXL Qty</th><th>M Qty</th><th>XL Qty</th><th>Total</th></tr></thead>
         <tbody>
           ${DB.dormRooms.map((r,i)=>`
             <tr>
               <td><input type="checkbox" id="dp_tick_${i}" style="width:15px;height:15px;accent-color:var(--gold-500);cursor:pointer;"></td>
               <td>${canEdit()?`<input type="text" id="dp_room_${i}" value="${escHtml(r.name)}" style="width:120px;padding:6px 8px;">`:`<b>${escHtml(r.name)}</b>`}</td>
               <td><input type="text" id="dp_caregiver_${i}" value="${escHtml(r.caregiver||'')}" placeholder="Caregiver name" style="width:150px;padding:6px 8px;"></td>
-              <td><input type="number" id="dp_qty_S_${i}" value="0" min="0" style="width:60px;padding:6px 8px;" oninput="updateDiaperRowTotal(${i})"></td>
+              <td><input type="number" id="dp_qty_JXL_${i}" value="0" min="0" style="width:60px;padding:6px 8px;" oninput="updateDiaperRowTotal(${i})"></td>
               <td><input type="number" id="dp_qty_M_${i}" value="0" min="0" style="width:60px;padding:6px 8px;" oninput="updateDiaperRowTotal(${i})"></td>
-              <td><input type="number" id="dp_qty_L_${i}" value="0" min="0" style="width:60px;padding:6px 8px;" oninput="updateDiaperRowTotal(${i})"></td>
               <td><input type="number" id="dp_qty_XL_${i}" value="0" min="0" style="width:60px;padding:6px 8px;" oninput="updateDiaperRowTotal(${i})"></td>
               <td class="mono" id="dp_total_${i}" style="font-weight:700;color:var(--gold-400);">0</td>
             </tr>`).join("")}
@@ -1187,25 +1266,24 @@ function todayDiaperRows(){
   const groups = {};
   rows.forEach(r=>{
     const key = r.batchId || `${r.date}|${r.time||''}|${r.department}|${r.receiverName}`;
-    if(!groups[key]) groups[key] = { date:r.date, time:r.time||'-', department:r.department, receiverName:r.receiverName, S:0, M:0, L:0, XL:0 };
+    if(!groups[key]) groups[key] = { date:r.date, time:r.time||'-', department:r.department, receiverName:r.receiverName, JXL:0, M:0, XL:0 };
     const item = diaperItems.find(it=>it.id===r.itemId);
     const size = item ? item.name.replace("Diapers ","").trim() : "";
     if(groups[key][size] !== undefined) groups[key][size] += Number(r.qty);
   });
   const list = Object.values(groups).sort((a,b)=> (b.time||"").localeCompare(a.time||""));
 
-  return `<div class="table-wrap"><table><thead><tr><th>Date</th><th>Time</th><th>Room</th><th>Caregiver</th><th>S</th><th>M</th><th>L</th><th>XL</th><th>Total</th></tr></thead>
+  return `<div class="table-wrap"><table><thead><tr><th>Date</th><th>Time</th><th>Room</th><th>Caregiver</th><th>JXL</th><th>M</th><th>XL</th><th>Total</th></tr></thead>
     <tbody>${list.map(g=>{
-      const total = g.S+g.M+g.L+g.XL;
-      return `<tr><td>${fmtDate(g.date)}</td><td>${escHtml(g.time)}</td><td>${escHtml(g.department)}</td><td>${escHtml(g.receiverName)}</td><td class="mono">${g.S||'-'}</td><td class="mono">${g.M||'-'}</td><td class="mono">${g.L||'-'}</td><td class="mono">${g.XL||'-'}</td><td class="mono"><b>${total}</b></td></tr>`;
+      const total = g.JXL+g.M+g.XL;
+      return `<tr><td>${fmtDate(g.date)}</td><td>${escHtml(g.time)}</td><td>${escHtml(g.department)}</td><td>${escHtml(g.receiverName)}</td><td class="mono">${g.JXL||'-'}</td><td class="mono">${g.M||'-'}</td><td class="mono">${g.XL||'-'}</td><td class="mono"><b>${total}</b></td></tr>`;
     }).join("")}</tbody></table></div>`;
 }
 function updateDiaperRowTotal(i){
-  const s = Number(document.getElementById(`dp_qty_S_${i}`).value)||0;
+  const jxl = Number(document.getElementById(`dp_qty_JXL_${i}`).value)||0;
   const m = Number(document.getElementById(`dp_qty_M_${i}`).value)||0;
-  const l = Number(document.getElementById(`dp_qty_L_${i}`).value)||0;
   const xl = Number(document.getElementById(`dp_qty_XL_${i}`).value)||0;
-  document.getElementById(`dp_total_${i}`).textContent = s+m+l+xl;
+  document.getElementById(`dp_total_${i}`).textContent = jxl+m+xl;
 }
 function saveDiaperIssue(){
   const date = document.getElementById("dp_date").value || todayStr();
@@ -1218,9 +1296,8 @@ function saveDiaperIssue(){
     const roomName = roomNameInput ? roomNameInput.value.trim() : room.name;
     const caregiver = document.getElementById(`dp_caregiver_${i}`).value.trim();
     const sizeQtys = {
-      S: Number(document.getElementById(`dp_qty_S_${i}`).value)||0,
+      JXL: Number(document.getElementById(`dp_qty_JXL_${i}`).value)||0,
       M: Number(document.getElementById(`dp_qty_M_${i}`).value)||0,
-      L: Number(document.getElementById(`dp_qty_L_${i}`).value)||0,
       XL: Number(document.getElementById(`dp_qty_XL_${i}`).value)||0
     };
 
@@ -1229,7 +1306,7 @@ function saveDiaperIssue(){
     room.caregiver = caregiver;
 
     if(!tick) return;
-    const totalQty = sizeQtys.S + sizeQtys.M + sizeQtys.L + sizeQtys.XL;
+    const totalQty = sizeQtys.JXL + sizeQtys.M + sizeQtys.XL;
     if(totalQty<=0) return;
     if(!caregiver){ toast(`${roomName}: caregiver name is required to issue`, true); return; }
 
@@ -1806,12 +1883,12 @@ function diaperReportData(){
   rows.forEach(r=>{
     const item = diaperItems.find(it=>it.id===r.itemId);
     const size = item ? item.name.replace("Diapers ","").trim() : "?";
-    byDate[r.date] = byDate[r.date] || { S:0, M:0, L:0, XL:0 };
+    byDate[r.date] = byDate[r.date] || { JXL:0, M:0, XL:0 };
     if(byDate[r.date][size] !== undefined) byDate[r.date][size] += Number(r.qty);
   });
   return Object.keys(byDate).sort().reverse().map(date => ({
     date, ...byDate[date],
-    total: byDate[date].S + byDate[date].M + byDate[date].L + byDate[date].XL
+    total: byDate[date].JXL + byDate[date].M + byDate[date].XL
   }));
 }
 function diaperDetailData(){
@@ -1821,13 +1898,13 @@ function diaperDetailData(){
   const groups = {};
   rows.forEach(r=>{
     const key = r.batchId || `${r.date}|${r.time||''}|${r.department}|${r.receiverName}`;
-    if(!groups[key]) groups[key] = { date:r.date, time:r.time||'-', department:r.department, receiverName:r.receiverName, S:0, M:0, L:0, XL:0 };
+    if(!groups[key]) groups[key] = { date:r.date, time:r.time||'-', department:r.department, receiverName:r.receiverName, JXL:0, M:0, XL:0 };
     const item = diaperItems.find(it=>it.id===r.itemId);
     const size = item ? item.name.replace("Diapers ","").trim() : "";
     if(groups[key][size] !== undefined) groups[key][size] += Number(r.qty);
   });
   return Object.values(groups)
-    .map(g => ({...g, total: g.S+g.M+g.L+g.XL}))
+    .map(g => ({...g, total: g.JXL+g.M+g.XL}))
     .sort((a,b)=> (b.date+b.time).localeCompare(a.date+a.time));
 }
 function buildDiaperReportTable(){
@@ -1837,11 +1914,11 @@ function buildDiaperReportTable(){
   const grandTotal = data.reduce((s,d)=>s+d.total,0);
   return `
     <div style="margin-bottom:10px;color:var(--gold-400);font-weight:600;">Total Diapers Issued: ${grandTotal}</div>
-    <div class="table-wrap"><table><thead><tr><th>Date</th><th>S Qty</th><th>M Qty</th><th>L Qty</th><th>XL Qty</th><th>Total Qty</th></tr></thead>
-    <tbody>${data.map(d=>`<tr><td>${fmtDate(d.date)}</td><td class="mono">${d.S}</td><td class="mono">${d.M}</td><td class="mono">${d.L}</td><td class="mono">${d.XL}</td><td class="mono"><b>${d.total}</b></td></tr>`).join("")}</tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th>Date</th><th>JXL Qty</th><th>M Qty</th><th>XL Qty</th><th>Total Qty</th></tr></thead>
+    <tbody>${data.map(d=>`<tr><td>${fmtDate(d.date)}</td><td class="mono">${d.JXL}</td><td class="mono">${d.M}</td><td class="mono">${d.XL}</td><td class="mono"><b>${d.total}</b></td></tr>`).join("")}</tbody></table></div>
     <div class="panel-title" style="margin:22px 0 12px;">Detailed Log (by Room)</div>
-    <div class="table-wrap"><table><thead><tr><th>Date</th><th>Time</th><th>Room</th><th>Caregiver</th><th>S</th><th>M</th><th>L</th><th>XL</th><th>Total</th></tr></thead>
-    <tbody>${detail.map(g=>`<tr><td>${fmtDate(g.date)}</td><td>${escHtml(g.time)}</td><td>${escHtml(g.department)}</td><td>${escHtml(g.receiverName)}</td><td class="mono">${g.S||'-'}</td><td class="mono">${g.M||'-'}</td><td class="mono">${g.L||'-'}</td><td class="mono">${g.XL||'-'}</td><td class="mono"><b>${g.total}</b></td></tr>`).join("")}</tbody></table></div>`;
+    <div class="table-wrap"><table><thead><tr><th>Date</th><th>Time</th><th>Room</th><th>Caregiver</th><th>JXL</th><th>M</th><th>XL</th><th>Total</th></tr></thead>
+    <tbody>${detail.map(g=>`<tr><td>${fmtDate(g.date)}</td><td>${escHtml(g.time)}</td><td>${escHtml(g.department)}</td><td>${escHtml(g.receiverName)}</td><td class="mono">${g.JXL||'-'}</td><td class="mono">${g.M||'-'}</td><td class="mono">${g.XL||'-'}</td><td class="mono"><b>${g.total}</b></td></tr>`).join("")}</tbody></table></div>`;
 }
 function exportReport(){
   let rows = [];
@@ -1885,11 +1962,11 @@ function exportReport(){
     DB.items.forEach(it=>rows.push([itemCode(it.category,it.seq),it.name,CATS[it.category].label,it.unit,stockOf(it.id),it.reorderLevel]));
   } else if(reportTab==="diaperreport"){
     rows.push(["SUMMARY BY DATE"]);
-    rows.push(["Date","S Qty","M Qty","L Qty","XL Qty","Total Qty"]);
-    diaperReportData().forEach(d=>rows.push([d.date,d.S,d.M,d.L,d.XL,d.total]));
+    rows.push(["Date","JXL Qty","M Qty","XL Qty","Total Qty"]);
+    diaperReportData().forEach(d=>rows.push([d.date,d.JXL,d.M,d.XL,d.total]));
     rows.push([]); rows.push(["DETAILED LOG BY ROOM"]);
-    rows.push(["Date","Time","Room","Caregiver","S","M","L","XL","Total"]);
-    diaperDetailData().forEach(g=>rows.push([g.date,g.time,g.department,g.receiverName,g.S,g.M,g.L,g.XL,g.total]));
+    rows.push(["Date","Time","Room","Caregiver","JXL","M","XL","Total"]);
+    diaperDetailData().forEach(g=>rows.push([g.date,g.time,g.department,g.receiverName,g.JXL,g.M,g.XL,g.total]));
   } else if(reportTab==="donation"){
     rows.push(["Date","Item","Donor","Qty"]);
     DB.incoming.filter(r=>r.sourceType==="Donation"&&inRange(r.date)).forEach(r=>rows.push([r.date,getItem(r.itemId)?.name||'',r.donorVendor||'',r.qty]));
@@ -1929,34 +2006,55 @@ function exportReport(){
 let deptFilter = { q: "" };
 function renderDepartments(){
   const main = document.getElementById("mainContent");
-  const list = DB.departments.filter(d => !deptFilter.q || d.toLowerCase().includes(deptFilter.q.toLowerCase()));
   main.innerHTML = `
-    ${topbarHtml("Departments","Manage department list used in Outward Entry", isAdmin()?`<button class="btn btn-gold btn-sm" onclick="addDepartment()">${ICONS.plus}Add Department</button>`:"")}
-    <div class="panel">
-      <div class="filter-bar">
-        <div class="field" style="flex:1;"><label>Search</label><input type="text" placeholder="Search department..." value="${escHtml(deptFilter.q)}" oninput="deptFilter.q=this.value;renderDepartments()"></div>
+    ${topbarHtml("Departments","Head Office, other homes, and partner institutions", isAdmin()?`<button class="btn btn-gold btn-sm" onclick="addLocationGroup()">${ICONS.plus}Add Location</button>`:"")}
+    ${DB.locationGroups.map((g, gi) => `
+      <div class="panel">
+        <div class="panel-head">
+          <div class="panel-title">${escHtml(g.name)} <span class="count">${g.departments.length}</span></div>
+          ${isAdmin()?`<div style="display:flex;gap:8px;">
+            <button class="btn btn-ghost btn-sm" onclick="addSubDepartment(${gi})">${ICONS.plus}Add Item</button>
+            <button class="icon-btn" onclick="removeLocationGroup(${gi})">${ICONS.trash}</button>
+          </div>`:''}
+        </div>
+        ${g.departments.length===0 ? emptyState("No departments listed here yet.") : `
+        <div class="table-wrap"><table><thead><tr><th>Name</th>${isAdmin()?'<th>Actions</th>':''}</tr></thead>
+        <tbody>
+          ${g.departments.map((d,di)=>`<tr><td>${escHtml(d)}</td>${isAdmin()?`<td class="row-actions"><button class="icon-btn" onclick="removeSubDepartment(${gi},${di})">${ICONS.trash}</button></td>`:''}</tr>`).join("")}
+        </tbody></table></div>`}
+        ${g.allowCustom ? `<p class="text-dim" style="font-size:12px;margin-top:10px;">Staff can also type a new name directly at the point of issue (e.g. a new convent or partner not listed here).</p>` : ""}
       </div>
-      <div class="table-wrap"><table><thead><tr><th>Department Name</th>${isAdmin()?'<th>Actions</th>':''}</tr></thead>
-      <tbody>
-        ${list.length===0 ? `<tr><td colspan="2">${emptyState("No departments found.")}</td></tr>` :
-          list.map((d)=>{const i=DB.departments.indexOf(d);return `<tr><td>${escHtml(d)}</td>${isAdmin()?`<td class="row-actions"><button class="icon-btn" onclick="removeDepartment(${i})">${ICONS.trash}</button></td>`:''}</tr>`}).join("")}
-      </tbody></table></div>
-    </div>
+    `).join("")}
   `;
 }
-function addDepartment(){
-  const name = prompt("Enter department name:");
+function addLocationGroup(){
+  const name = prompt("Enter new location/home name (e.g. a new branch or home):");
   if(!name || !name.trim()) return;
-  DB.departments.push(name.trim());
+  DB.locationGroups.push({ name: name.trim(), departments: [], allowCustom: false });
   saveDB(DB);
-  toast("Department added");
+  toast("Location added");
   renderDepartments();
 }
-function removeDepartment(i){
-  if(!confirm("Remove this department?")) return;
-  DB.departments.splice(i,1);
+function removeLocationGroup(gi){
+  if(!confirm(`Remove "${DB.locationGroups[gi].name}" and all its departments?`)) return;
+  DB.locationGroups.splice(gi,1);
   saveDB(DB);
-  toast("Department removed");
+  toast("Location removed");
+  renderDepartments();
+}
+function addSubDepartment(gi){
+  const name = prompt(`Enter department/institution name to add under "${DB.locationGroups[gi].name}":`);
+  if(!name || !name.trim()) return;
+  DB.locationGroups[gi].departments.push(name.trim());
+  saveDB(DB);
+  toast("Added");
+  renderDepartments();
+}
+function removeSubDepartment(gi, di){
+  if(!confirm("Remove this entry?")) return;
+  DB.locationGroups[gi].departments.splice(di,1);
+  saveDB(DB);
+  toast("Removed");
   renderDepartments();
 }
 
