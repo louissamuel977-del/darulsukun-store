@@ -1076,7 +1076,7 @@ let outgoingFilter = { dept:"", from:"", to:"", q:"" };
 function renderOutgoing(){
   const main = document.getElementById("mainContent");
   main.innerHTML = `
-    ${topbarHtml("Outward Entry","Record items issued to departments", canEdit()?`<button class="btn btn-gold btn-sm" onclick="openOutgoingForm()">${ICONS.plus}New Outward Entry</button>`:"")}
+    ${topbarHtml("Outward Entry","Record items issued to departments", canEdit()?`<button class="btn btn-ghost btn-sm" onclick="openBulkOutward()">${ICONS.plus}Bulk Entry (Multiple Items)</button><button class="btn btn-gold btn-sm" onclick="openOutgoingForm()">${ICONS.plus}New Outward Entry</button>`:"")}
     <div class="panel">
       <div class="filter-bar">
         <div class="field"><label>Department</label>
@@ -1317,6 +1317,158 @@ function deleteOutgoing(id){
   DB.outgoing = DB.outgoing.filter(r=>r.id!==id);
   saveDB(DB);
   toast("Entry deleted", false, logId ? undoMultiple([logId]) : null);
+  renderOutgoing();
+}
+
+/* ============================================================
+   BULK OUTWARD ENTRY — one department/receiver getting many
+   items issued at once. Shared date/location/department/receiver
+   entered once; each row is one item.
+   ============================================================ */
+let bulkOutShared = { date: todayStr(), locGroupIndex: 0, department: "", deptCustom: "", receiverName: "", purpose: "", approvedBy: "", received: false };
+let bulkOutRows = [];
+function freshBulkOutRow(){ return { itemId:"", qty:"" }; }
+function resetBulkOutRows(n){ bulkOutRows = Array.from({length:n}, freshBulkOutRow); }
+
+function openBulkOutward(){
+  resetBulkOutRows(10);
+  bulkOutShared = { date: todayStr(), locGroupIndex: 0, department: "", deptCustom: "", receiverName: "", purpose: "", approvedBy: "", received: false };
+  renderBulkOutward();
+}
+function renderBulkOutward(){
+  const main = document.getElementById("mainContent");
+  main.innerHTML = `
+    ${topbarHtml("Bulk Outward Entry","One department/receiver, many items — enter once, add each item as a row", `<button class="btn btn-ghost btn-sm" onclick="renderOutgoing()">← Back to Outward List</button>`)}
+    <div class="panel">
+      <div class="form-grid" style="margin-bottom:14px;max-width:900px;">
+        <div class="field"><label>Date</label><input type="date" id="bout_date" value="${bulkOutShared.date}" onchange="bulkOutShared.date=this.value"></div>
+        <div class="field"><label>Location</label>
+          <select id="bout_locgroup" onchange="bulkOutUpdateDeptOptions()">
+            ${DB.locationGroups.map((g,gi)=>`<option value="${gi}" ${bulkOutShared.locGroupIndex===gi?'selected':''}>${escHtml(g.name)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="field"><label>Department</label>
+          <select id="bout_dept" onchange="bulkOutToggleDeptCustom()"></select>
+        </div>
+        <div class="field" id="bout_dept_custom_wrap" style="display:none;"><label>Type Name</label><input type="text" id="bout_dept_custom" oninput="bulkOutShared.deptCustom=this.value" placeholder="e.g. new convent name"></div>
+        <div class="field"><label>Receiver Name</label><input type="text" id="bout_receiver" value="${escHtml(bulkOutShared.receiverName)}" oninput="bulkOutShared.receiverName=this.value"></div>
+        <div class="field"><label>Purpose / Reason</label><input type="text" id="bout_purpose" value="${escHtml(bulkOutShared.purpose)}" oninput="bulkOutShared.purpose=this.value"></div>
+        <div class="field"><label>Approved By</label><input type="text" id="bout_approved" value="${escHtml(bulkOutShared.approvedBy)}" oninput="bulkOutShared.approvedBy=this.value"></div>
+        <div class="field"><label>Received Confirmation</label>
+          <select id="bout_received" onchange="bulkOutShared.received=this.value==='1'">
+            <option value="0" ${!bulkOutShared.received?'selected':''}>Pending</option>
+            <option value="1" ${bulkOutShared.received?'selected':''}>Confirmed Received</option>
+          </select>
+        </div>
+      </div>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th style="min-width:220px;">Item</th><th>Qty Issued</th><th>Available Stock</th><th></th></tr></thead>
+        <tbody>
+          ${bulkOutRows.map((r,i)=>{
+            const item = getItem(r.itemId);
+            const stock = item ? stockOf(item.id) : null;
+            return `
+            <tr>
+              <td><select id="bout_item_${i}" onchange="bulkOutRows[${i}].itemId=this.value;renderBulkOutward()" style="min-width:210px;">
+                <option value="">-- Select item --</option>
+                ${itemOptions(r.itemId)}
+              </select></td>
+              <td><input type="number" id="bout_qty_${i}" value="${r.qty}" min="0" style="width:80px;padding:6px 8px;" oninput="bulkOutRows[${i}].qty=this.value"></td>
+              <td class="mono">${item?`<span style="color:${stock<=0?'var(--danger)':'var(--gold-400)'};">${stock} ${escHtml(item.unit)}</span>`:'-'}</td>
+              <td><button class="icon-btn" onclick="removeBulkOutRow(${i})">${ICONS.trash}</button></td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+      </div>
+      <div style="display:flex;gap:10px;margin:14px 0;flex-wrap:wrap;">
+        <button class="btn btn-ghost btn-sm" onclick="addBulkOutRows(5)">${ICONS.plus} Add 5 Rows</button>
+        <button class="btn btn-ghost btn-sm" onclick="addBulkOutRows(20)">${ICONS.plus} Add 20 Rows</button>
+        <button class="btn btn-ghost btn-sm" onclick="addBulkOutRows(50)">${ICONS.plus} Add 50 Rows</button>
+      </div>
+      <div style="margin-bottom:16px;font-size:13px;color:var(--ink-dim);">${bulkOutRows.filter(r=>r.itemId && Number(r.qty)>0).length} item(s) ready to save</div>
+      <div class="form-actions">
+        <button class="btn btn-gold btn-sm" onclick="saveBulkOutward()">${ICONS.check} Save All Entries</button>
+        <button class="btn btn-ghost btn-sm" onclick="renderOutgoing()">Cancel</button>
+      </div>
+    </div>
+  `;
+  bulkOutInitDeptFields();
+}
+function bulkOutPopulateDeptSelect(groupIndex, selectedDept){
+  const group = DB.locationGroups[groupIndex];
+  let opts = group.departments.map(d=>`<option value="${escHtml(d)}" ${selectedDept===d?'selected':''}>${escHtml(d)}</option>`).join("");
+  if(group.allowCustom) opts += `<option value="__custom__">+ Type a new name...</option>`;
+  if(!opts) opts = `<option value="__custom__">+ Type a name...</option>`;
+  document.getElementById("bout_dept").innerHTML = opts;
+}
+function bulkOutUpdateDeptOptions(){
+  const gi = Number(document.getElementById("bout_locgroup").value);
+  bulkOutShared.locGroupIndex = gi;
+  bulkOutPopulateDeptSelect(gi, null);
+  bulkOutToggleDeptCustom();
+}
+function bulkOutToggleDeptCustom(){
+  const val = document.getElementById("bout_dept").value;
+  bulkOutShared.department = val;
+  document.getElementById("bout_dept_custom_wrap").style.display = val==="__custom__" ? "block" : "none";
+}
+function bulkOutInitDeptFields(){
+  const gi = bulkOutShared.locGroupIndex || 0;
+  document.getElementById("bout_locgroup").value = gi;
+  bulkOutPopulateDeptSelect(gi, bulkOutShared.department);
+  if(bulkOutShared.department === "__custom__"){
+    document.getElementById("bout_dept").value = "__custom__";
+    document.getElementById("bout_dept_custom_wrap").style.display = "block";
+    document.getElementById("bout_dept_custom").value = bulkOutShared.deptCustom;
+  }
+}
+function addBulkOutRows(n){
+  for(let k=0;k<n;k++) bulkOutRows.push(freshBulkOutRow());
+  renderBulkOutward();
+}
+function removeBulkOutRow(i){
+  bulkOutRows.splice(i,1);
+  renderBulkOutward();
+}
+function saveBulkOutward(){
+  const date = bulkOutShared.date || todayStr();
+  let department = bulkOutShared.department;
+  if(department === "__custom__"){
+    department = bulkOutShared.deptCustom.trim();
+    if(!department){ toast("Please type a department/institution name", true); return; }
+    const group = DB.locationGroups[bulkOutShared.locGroupIndex];
+    if(group && !group.departments.includes(department)) group.departments.push(department);
+  }
+  if(!department){ toast("Please select a department", true); return; }
+  const receiverName = bulkOutShared.receiverName.trim();
+  if(!receiverName){ toast("Receiver name is required", true); return; }
+
+  let savedCount = 0, skippedStock = 0;
+  bulkOutRows.forEach(r=>{
+    const itemId = r.itemId;
+    const qty = Number(r.qty)||0;
+    if(!itemId || qty<=0) return;
+    const item = getItem(itemId);
+    if(item && qty > stockOf(itemId)) skippedStock++;
+    uid("outgoing");
+    DB.outgoing.push({
+      id: "out_"+Date.now()+"_"+savedCount,
+      date, itemId, qty,
+      department,
+      receiverName,
+      purpose: bulkOutShared.purpose.trim(),
+      approvedBy: bulkOutShared.approvedBy.trim(),
+      received: bulkOutShared.received,
+      enteredBy: CURRENT_USER.name
+    });
+    savedCount++;
+  });
+
+  if(savedCount===0){ toast("No rows had both an item and a qty — nothing saved", true); return; }
+  saveDB(DB);
+  toast(`${savedCount} outward entries saved to ${department}${skippedStock>0?` (${skippedStock} exceeded available stock)`:''}`);
   renderOutgoing();
 }
 
