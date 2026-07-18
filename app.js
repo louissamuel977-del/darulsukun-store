@@ -791,7 +791,7 @@ let incomingFilter = { cat:"", source:"", from:"", to:"", q:"" };
 function renderIncoming(){
   const main = document.getElementById("mainContent");
   main.innerHTML = `
-    ${topbarHtml("Inward Entry","Record purchases and donations received", canEdit()?`<button class="btn btn-gold btn-sm" onclick="openIncomingForm()">${ICONS.plus}New Inward Entry</button>`:"")}
+    ${topbarHtml("Inward Entry","Record purchases and donations received", canEdit()?`<button class="btn btn-ghost btn-sm" onclick="openBulkInward()">${ICONS.plus}Bulk Entry (Multiple Items)</button><button class="btn btn-gold btn-sm" onclick="openIncomingForm()">${ICONS.plus}New Inward Entry</button>`:"")}
     <div class="panel">
       <div class="filter-bar">
         <div class="field"><label>Category</label>
@@ -948,6 +948,124 @@ function deleteIncoming(id){
   DB.incoming = DB.incoming.filter(r=>r.id!==id);
   saveDB(DB);
   toast("Entry deleted", false, logId ? undoMultiple([logId]) : null);
+  renderIncoming();
+}
+
+/* ============================================================
+   BULK INWARD ENTRY — one vendor/donor supplying many items in
+   a single delivery (e.g. 200+ items from one market run).
+   Shared date/source/vendor entered once; each row is one item.
+   ============================================================ */
+let bulkShared = { date: todayStr(), sourceType: "Purchasing", vendor: "", invoiceNo: "" };
+let bulkRows = [];
+function freshBulkRow(){ return { itemId:"", qty:"", rate:"", expiryDate:"", batchNo:"" }; }
+function resetBulkRows(n){ bulkRows = Array.from({length:n}, freshBulkRow); }
+
+function openBulkInward(){
+  resetBulkRows(10);
+  bulkShared = { date: todayStr(), sourceType: "Purchasing", vendor: "", invoiceNo: "" };
+  renderBulkInward();
+}
+function renderBulkInward(){
+  const main = document.getElementById("mainContent");
+  const grandTotal = bulkRows.reduce((s,r)=> s + (Number(r.qty)||0)*(Number(r.rate)||0), 0);
+  main.innerHTML = `
+    ${topbarHtml("Bulk Inward Entry","One vendor/donor, many items — enter once, add each item as a row", `<button class="btn btn-ghost btn-sm" onclick="renderIncoming()">← Back to Inward List</button>`)}
+    <div class="panel">
+      <div class="form-grid" style="margin-bottom:18px;max-width:750px;">
+        <div class="field"><label>Date</label><input type="date" id="bulk_date" value="${bulkShared.date}" onchange="bulkShared.date=this.value"></div>
+        <div class="field"><label>Source Type</label>
+          <select id="bulk_source" onchange="bulkShared.sourceType=this.value">
+            <option value="Purchasing" ${bulkShared.sourceType==='Purchasing'?'selected':''}>Purchasing</option>
+            <option value="Donation" ${bulkShared.sourceType==='Donation'?'selected':''}>Donation</option>
+          </select>
+        </div>
+        <div class="field"><label>Vendor / Donor Name</label><input type="text" id="bulk_vendor" value="${escHtml(bulkShared.vendor)}" oninput="bulkShared.vendor=this.value" placeholder="e.g. Imtiaz Market"></div>
+        <div class="field"><label>Invoice / Receipt No.</label><input type="text" id="bulk_invoice" value="${escHtml(bulkShared.invoiceNo)}" oninput="bulkShared.invoiceNo=this.value"></div>
+      </div>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th style="min-width:220px;">Item</th><th>Qty</th><th>Rate</th><th>Total</th><th>Expiry Date</th><th>Batch No.</th><th></th></tr></thead>
+        <tbody>
+          ${bulkRows.map((r,i)=>`
+            <tr>
+              <td><select id="bulk_item_${i}" onchange="bulkRows[${i}].itemId=this.value" style="min-width:210px;">
+                <option value="">-- Select item --</option>
+                ${itemOptions(r.itemId)}
+              </select></td>
+              <td><input type="number" id="bulk_qty_${i}" value="${r.qty}" min="0" style="width:70px;padding:6px 8px;" oninput="bulkRows[${i}].qty=this.value;updateBulkRowTotal(${i})"></td>
+              <td><input type="number" id="bulk_rate_${i}" value="${r.rate}" min="0" style="width:80px;padding:6px 8px;" oninput="bulkRows[${i}].rate=this.value;updateBulkRowTotal(${i})"></td>
+              <td class="mono" id="bulk_total_${i}" style="font-weight:600;color:var(--gold-400);">${fmtMoney((Number(r.qty)||0)*(Number(r.rate)||0))}</td>
+              <td><input type="date" id="bulk_expiry_${i}" value="${r.expiryDate}" style="padding:6px 8px;" onchange="bulkRows[${i}].expiryDate=this.value"></td>
+              <td><input type="text" id="bulk_batch_${i}" value="${escHtml(r.batchNo)}" style="width:90px;padding:6px 8px;" oninput="bulkRows[${i}].batchNo=this.value"></td>
+              <td><button class="icon-btn" onclick="removeBulkRow(${i})">${ICONS.trash}</button></td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+      </div>
+      <div style="display:flex;gap:10px;margin:14px 0;flex-wrap:wrap;">
+        <button class="btn btn-ghost btn-sm" onclick="addBulkRows(5)">${ICONS.plus} Add 5 Rows</button>
+        <button class="btn btn-ghost btn-sm" onclick="addBulkRows(20)">${ICONS.plus} Add 20 Rows</button>
+        <button class="btn btn-ghost btn-sm" onclick="addBulkRows(50)">${ICONS.plus} Add 50 Rows</button>
+      </div>
+      <div style="margin-bottom:16px;font-size:14px;color:var(--ink);">Grand Total: <b style="color:var(--gold-400);font-size:17px;">${fmtMoney(grandTotal)}</b> · <span class="text-dim">${bulkRows.filter(r=>r.itemId && Number(r.qty)>0).length} item(s) ready to save</span></div>
+      <div class="form-actions">
+        <button class="btn btn-gold btn-sm" onclick="saveBulkInward()">${ICONS.check} Save All Entries</button>
+        <button class="btn btn-ghost btn-sm" onclick="renderIncoming()">Cancel</button>
+      </div>
+    </div>
+  `;
+}
+function updateBulkRowTotal(i){
+  const qty = Number(document.getElementById(`bulk_qty_${i}`).value)||0;
+  const rate = Number(document.getElementById(`bulk_rate_${i}`).value)||0;
+  document.getElementById(`bulk_total_${i}`).textContent = fmtMoney(qty*rate);
+  const grandTotal = bulkRows.reduce((s,r,idx)=>{
+    const q = idx===i ? qty : (Number(r.qty)||0);
+    const rt = idx===i ? rate : (Number(r.rate)||0);
+    return s + q*rt;
+  }, 0);
+}
+function addBulkRows(n){
+  for(let k=0;k<n;k++) bulkRows.push(freshBulkRow());
+  renderBulkInward();
+}
+function removeBulkRow(i){
+  bulkRows.splice(i,1);
+  renderBulkInward();
+}
+function saveBulkInward(){
+  const date = bulkShared.date || todayStr();
+  const sourceType = bulkShared.sourceType;
+  const vendor = bulkShared.vendor.trim();
+  const invoiceNo = bulkShared.invoiceNo.trim();
+  if(!vendor){ toast(`${sourceType==='Donation'?'Donor':'Vendor'} name is required`, true); return; }
+
+  let savedCount = 0;
+  bulkRows.forEach(r=>{
+    const itemId = r.itemId;
+    const qty = Number(r.qty)||0;
+    if(!itemId || qty<=0) return;
+    const rate = Number(r.rate)||0;
+    uid("incoming");
+    DB.incoming.push({
+      id: "in_"+Date.now()+"_"+savedCount,
+      date, sourceType,
+      donorVendor: vendor,
+      itemId, qty, rate,
+      total: qty*rate,
+      expiryDate: r.expiryDate || "",
+      batchNo: r.batchNo || "",
+      invoiceNo,
+      remarks: "",
+      enteredBy: CURRENT_USER.name
+    });
+    savedCount++;
+  });
+
+  if(savedCount===0){ toast("No rows had both an item and a qty — nothing saved", true); return; }
+  saveDB(DB);
+  toast(`${savedCount} inward entries saved from ${vendor}`);
   renderIncoming();
 }
 
