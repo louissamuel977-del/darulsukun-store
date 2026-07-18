@@ -29,7 +29,8 @@ const ICONS = {
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg>',
   scrap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6M10 11v6M14 11v6"/></svg>',
   undo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6M3 13a9 9 0 1 0 3-6.7L3 9"/></svg>',
-  maintenance: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L2 19l3 3 7.3-7.3a4 4 0 0 0 5.4-5.4l-2.8 2.8-2-2 2.8-2.8Z"/></svg>'
+  maintenance: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L2 19l3 3 7.3-7.3a4 4 0 0 0 5.4-5.4l-2.8 2.8-2-2 2.8-2.8Z"/></svg>',
+  finance: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18M7 15l4-5 3 3 5-7"/></svg>'
 };
 
 function defaultDB(){
@@ -238,6 +239,7 @@ const NAV_ITEMS = [
   { id:"diapers", label:"Diaper Issue", icon:"diaper" },
   { id:"scrap", label:"Scrap / Wastage", icon:"scrap" },
   { id:"maintenance", label:"Maintenance", icon:"maintenance" },
+  { id:"finance", label:"Finance", icon:"finance" },
   { id:"reports", label:"Reports", icon:"reports" },
   { id:"departments", label:"Departments", icon:"departments" },
   { id:"settings", label:"Settings", icon:"settings" }
@@ -261,6 +263,7 @@ function goTo(page){
     diapers: renderDiaperIssue,
     scrap: renderScrap,
     maintenance: renderMaintenance,
+    finance: renderFinance,
     reports: renderReports,
     departments: renderDepartments,
     settings: renderSettings
@@ -1933,6 +1936,148 @@ function deleteMaintenance(id){
   saveDB(DB);
   toast("Entry deleted", false, logId ? undoMultiple([logId]) : null);
   renderMaintenance();
+}
+
+/* ============================================================
+   FINANCE — purchasing spend across time periods, with trends
+   and comparisons. Read-only view, built from Inward records.
+   ============================================================ */
+function sumPurchases(rows){ return rows.reduce((s,r)=>s+Number(r.total||0),0); }
+function purchasesInDateRange(fromStr, toStr){
+  return DB.incoming.filter(r=>r.sourceType==="Purchasing" && r.date>=fromStr && r.date<=toStr);
+}
+function dateNDaysAgo(n){
+  const d = new Date(); d.setDate(d.getDate()-n);
+  return d.toISOString().slice(0,10);
+}
+function pctChange(current, previous){
+  if(previous<=0) return current>0 ? 100 : 0;
+  return Math.round(((current-previous)/previous)*100);
+}
+function trendBadge(pct){
+  if(pct>0) return `<span style="color:var(--ok);">▲ ${pct}%</span>`;
+  if(pct<0) return `<span style="color:var(--danger);">▼ ${Math.abs(pct)}%</span>`;
+  return `<span style="color:var(--ink-faint);">— 0%</span>`;
+}
+
+function renderFinance(){
+  const main = document.getElementById("mainContent");
+  const today = todayStr();
+
+  // Today vs yesterday
+  const todayTotal = sumPurchases(purchasesInDateRange(today, today));
+  const yesterday = dateNDaysAgo(1);
+  const yesterdayTotal = sumPurchases(purchasesInDateRange(yesterday, yesterday));
+
+  // This week (rolling last 7 days) vs previous 7 days
+  const weekStart = dateNDaysAgo(6);
+  const weekTotal = sumPurchases(purchasesInDateRange(weekStart, today));
+  const prevWeekEnd = dateNDaysAgo(7);
+  const prevWeekStart = dateNDaysAgo(13);
+  const prevWeekTotal = sumPurchases(purchasesInDateRange(prevWeekStart, prevWeekEnd));
+
+  // This month vs last month
+  const monthStart = today.slice(0,8)+"01";
+  const monthTotal = sumPurchases(purchasesInDateRange(monthStart, today));
+  const lastMonthDate = new Date(); lastMonthDate.setDate(1); lastMonthDate.setMonth(lastMonthDate.getMonth()-1);
+  const lastMonthStart = lastMonthDate.toISOString().slice(0,8)+"01";
+  const lastMonthEndDate = new Date(lastMonthDate.getFullYear(), lastMonthDate.getMonth()+1, 0);
+  const lastMonthEnd = lastMonthEndDate.toISOString().slice(0,10);
+  const lastMonthTotal = sumPurchases(purchasesInDateRange(lastMonthStart, lastMonthEnd));
+
+  // This year vs last year
+  const yearStart = today.slice(0,4)+"-01-01";
+  const yearTotal = sumPurchases(purchasesInDateRange(yearStart, today));
+  const lastYear = String(Number(today.slice(0,4))-1);
+  const lastYearTotal = sumPurchases(purchasesInDateRange(lastYear+"-01-01", lastYear+"-12-31"));
+
+  // Daily trend, last 14 days
+  const dailyTrend = [];
+  for(let i=13;i>=0;i--){
+    const d = dateNDaysAgo(i);
+    dailyTrend.push({ label: d.slice(8,10)+"/"+d.slice(5,7), total: sumPurchases(purchasesInDateRange(d,d)) });
+  }
+  const maxDaily = Math.max(1, ...dailyTrend.map(d=>d.total));
+
+  // Monthly trend, last 12 months
+  const monthlyTrend = [];
+  for(let i=11;i>=0;i--){
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth()-i);
+    const mStart = d.toISOString().slice(0,8)+"01";
+    const mEndDate = new Date(d.getFullYear(), d.getMonth()+1, 0);
+    const mEnd = mEndDate.toISOString().slice(0,10);
+    monthlyTrend.push({ label: d.toLocaleDateString("en-GB",{month:"short"}), total: sumPurchases(purchasesInDateRange(mStart,mEnd)) });
+  }
+  const maxMonthly = Math.max(1, ...monthlyTrend.map(m=>m.total));
+
+  // Category breakdown, this month
+  const monthRows = purchasesInDateRange(monthStart, today);
+  const catSpend = { household:0, stationery:0, dietfood:0, diapers:0 };
+  monthRows.forEach(r=>{ const item = getItem(r.itemId); if(item) catSpend[item.category] += Number(r.total||0); });
+
+  // Top vendors this month
+  const vendorSpend = {};
+  monthRows.forEach(r=>{ const v = r.donorVendor||"Unknown"; vendorSpend[v] = (vendorSpend[v]||0) + Number(r.total||0); });
+  const topVendors = Object.entries(vendorSpend).sort((a,b)=>b[1]-a[1]).slice(0,5);
+
+  main.innerHTML = `
+    ${topbarHtml("Finance","Purchasing spend across time periods")}
+    <div class="grid grid-4" style="margin-bottom:10px;">
+      ${statCard("Today","bar-hh",fmtMoney(todayTotal),"")}
+      ${statCard("This Week","bar-st",fmtMoney(weekTotal),"")}
+      ${statCard("This Month","bar-df",fmtMoney(monthTotal),"")}
+      ${statCard("This Year","bar-dp",fmtMoney(yearTotal),"")}
+    </div>
+    <div class="grid grid-4" style="margin-bottom:20px;">
+      <div class="text-dim" style="font-size:12px;">vs yesterday: ${trendBadge(pctChange(todayTotal,yesterdayTotal))}</div>
+      <div class="text-dim" style="font-size:12px;">vs previous week: ${trendBadge(pctChange(weekTotal,prevWeekTotal))}</div>
+      <div class="text-dim" style="font-size:12px;">vs last month: ${trendBadge(pctChange(monthTotal,lastMonthTotal))}</div>
+      <div class="text-dim" style="font-size:12px;">vs last year: ${trendBadge(pctChange(yearTotal,lastYearTotal))}</div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><div class="panel-title">Daily Purchasing — Last 14 Days</div></div>
+      <div style="display:flex;align-items:flex-end;gap:6px;height:140px;padding:10px 4px 0;">
+        ${dailyTrend.map(d=>`
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;" title="${d.label}: ${fmtMoney(d.total)}">
+            <div style="width:100%;max-width:26px;background:linear-gradient(180deg,var(--gold-400),var(--gold-500));border-radius:4px 4px 0 0;height:${Math.max(3,(d.total/maxDaily)*100)}%;"></div>
+            <div style="font-size:9.5px;color:var(--ink-faint);margin-top:6px;white-space:nowrap;">${d.label}</div>
+          </div>`).join("")}
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><div class="panel-title">Monthly Purchasing — Last 12 Months</div></div>
+      <div style="display:flex;align-items:flex-end;gap:8px;height:140px;padding:10px 4px 0;">
+        ${monthlyTrend.map(m=>`
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;" title="${m.label}: ${fmtMoney(m.total)}">
+            <div style="width:100%;max-width:34px;background:linear-gradient(180deg,var(--purple-500),var(--purple-600));border-radius:4px 4px 0 0;height:${Math.max(3,(m.total/maxMonthly)*100)}%;"></div>
+            <div style="font-size:10px;color:var(--ink-faint);margin-top:6px;">${m.label}</div>
+          </div>`).join("")}
+      </div>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="panel">
+        <div class="panel-head"><div class="panel-title">This Month — By Category</div></div>
+        ${Object.values(catSpend).every(v=>v===0) ? emptyState("No purchases recorded this month.") :
+          Object.entries(catSpend).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]).map(([cat,amt])=>`
+          <div class="alert-item">
+            <div class="alert-left"><span class="badge ${CATS[cat].badge}">${CATS[cat].label}</span></div>
+            <div class="mono"><b>${fmtMoney(amt)}</b></div>
+          </div>`).join("")}
+      </div>
+      <div class="panel">
+        <div class="panel-head"><div class="panel-title">Top Vendors This Month</div></div>
+        ${topVendors.length===0 ? emptyState("No purchases recorded this month.") :
+          topVendors.map(([vendor,amt])=>`
+          <div class="alert-item">
+            <div class="alert-left">${escHtml(vendor)}</div>
+            <div class="mono"><b>${fmtMoney(amt)}</b></div>
+          </div>`).join("")}
+      </div>
+    </div>
+  `;
 }
 
 /* ============================================================
