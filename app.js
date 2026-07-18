@@ -2094,6 +2094,7 @@ function renderReports(){
         <div class="field"><label>Report Type</label>
           <select onchange="reportTab=this.value;renderReports()">
             <option value="masteraudit" ${reportTab==='masteraudit'?'selected':''}>★ Master Audit Report (Full)</option>
+            <option value="financereport" ${reportTab==='financereport'?'selected':''}>Finance Report (Purchasing Trends)</option>
             <option value="daily" ${reportTab==='daily'?'selected':''}>Daily Entry Report</option>
             <option value="consumption" ${reportTab==='consumption'?'selected':''}>Monthly Consumption (by Department)</option>
             <option value="donation" ${reportTab==='donation'?'selected':''}>Donation Report</option>
@@ -2121,6 +2122,9 @@ function inRange(dateStr){
 function buildReport(){
   if(reportTab==="masteraudit"){
     return buildMasterAuditReport();
+  }
+  if(reportTab==="financereport"){
+    return buildFinanceReport();
   }
   if(reportTab==="daily"){
     const inc = DB.incoming.filter(r=>inRange(r.date));
@@ -2291,6 +2295,56 @@ function buildMasterAuditReport(){
     </div>
   `;
 }
+function buildFinanceReport(){
+  const today = todayStr();
+  const todayTotal = sumPurchases(purchasesInDateRange(today, today));
+  const weekTotal = sumPurchases(purchasesInDateRange(dateNDaysAgo(6), today));
+  const monthStart = today.slice(0,8)+"01";
+  const monthTotal = sumPurchases(purchasesInDateRange(monthStart, today));
+  const yearStart = today.slice(0,4)+"-01-01";
+  const yearTotal = sumPurchases(purchasesInDateRange(yearStart, today));
+
+  const rangeRows = purchasesInDateRange(reportRange.from, reportRange.to).sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const rangeTotal = sumPurchases(rangeRows);
+
+  const catSpend = { household:0, stationery:0, dietfood:0, diapers:0 };
+  rangeRows.forEach(r=>{ const item = getItem(r.itemId); if(item) catSpend[item.category] += Number(r.total||0); });
+  const vendorSpend = {};
+  rangeRows.forEach(r=>{ const v = r.donorVendor||"Unknown"; vendorSpend[v] = (vendorSpend[v]||0) + Number(r.total||0); });
+  const topVendors = Object.entries(vendorSpend).sort((a,b)=>b[1]-a[1]).slice(0,5);
+
+  return `
+    <div class="grid grid-4" style="margin-bottom:20px;">
+      ${statCard("Today","bar-hh",fmtMoney(todayTotal),"")}
+      ${statCard("This Week","bar-st",fmtMoney(weekTotal),"")}
+      ${statCard("This Month","bar-df",fmtMoney(monthTotal),"")}
+      ${statCard("This Year","bar-dp",fmtMoney(yearTotal),"")}
+    </div>
+    <div style="margin-bottom:14px;padding:12px 16px;background:rgba(212,175,55,0.08);border:1px solid var(--gold-500);border-radius:8px;">
+      Selected Range (${fmtDate(reportRange.from)} — ${fmtDate(reportRange.to)}): <b style="color:var(--gold-400);">${fmtMoney(rangeTotal)}</b> · ${rangeRows.length} purchase entries
+    </div>
+    <div class="grid grid-2" style="margin-bottom:20px;">
+      <div class="panel">
+        <div class="panel-title" style="margin-bottom:10px;">By Category (selected range)</div>
+        ${Object.values(catSpend).every(v=>v===0) ? emptyState("No purchases in this range.") :
+          Object.entries(catSpend).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]).map(([cat,amt])=>`
+          <div class="alert-item"><div class="alert-left"><span class="badge ${CATS[cat].badge}">${CATS[cat].label}</span></div><div class="mono"><b>${fmtMoney(amt)}</b></div></div>`).join("")}
+      </div>
+      <div class="panel">
+        <div class="panel-title" style="margin-bottom:10px;">Top Vendors (selected range)</div>
+        ${topVendors.length===0 ? emptyState("No purchases in this range.") :
+          topVendors.map(([vendor,amt])=>`
+          <div class="alert-item"><div class="alert-left">${escHtml(vendor)}</div><div class="mono"><b>${fmtMoney(amt)}</b></div></div>`).join("")}
+      </div>
+    </div>
+    <div class="panel-title" style="margin-bottom:10px;">Purchase Detail (selected range)</div>
+    <div class="table-wrap"><table><thead><tr><th>Date</th><th>Item</th><th>Category</th><th>Vendor</th><th>Qty</th><th>Rate</th><th>Total</th></tr></thead>
+    <tbody>${rangeRows.length?rangeRows.map(r=>{
+      const item = getItem(r.itemId);
+      return `<tr><td>${fmtDate(r.date)}</td><td>${item?escHtml(item.name):'-'}</td><td>${item?CATS[item.category].label:'-'}</td><td>${escHtml(r.donorVendor||'-')}</td><td class="mono">${r.qty}</td><td class="mono">${fmtMoney(r.rate)}</td><td class="mono">${fmtMoney(r.total)}</td></tr>`;
+    }).join(""):`<tr><td colspan="7">${emptyState("No purchases in this range")}</td></tr>`}</tbody></table></div>
+  `;
+}
 function diaperReportData(){
   const diaperItems = DB.items.filter(i=>i.category==="diapers");
   const rows = DB.outgoing.filter(r => inRange(r.date) && diaperItems.some(it=>it.id===r.itemId));
@@ -2363,6 +2417,23 @@ function exportReport(){
     });
     downloadCSV(`dus-store-master-audit-${todayStr()}.csv`, rows);
     toast("Master audit report exported");
+    return;
+  }
+  if(reportTab==="financereport"){
+    const today = todayStr();
+    rows.push(["FINANCE REPORT"]);
+    rows.push(["Today", fmtMoney(sumPurchases(purchasesInDateRange(today, today)))]);
+    rows.push(["This Week", fmtMoney(sumPurchases(purchasesInDateRange(dateNDaysAgo(6), today)))]);
+    rows.push(["This Month", fmtMoney(sumPurchases(purchasesInDateRange(today.slice(0,8)+"01", today)))]);
+    rows.push(["This Year", fmtMoney(sumPurchases(purchasesInDateRange(today.slice(0,4)+"-01-01", today)))]);
+    rows.push([]); rows.push(["PURCHASE DETAIL", fmtDate(reportRange.from), "to", fmtDate(reportRange.to)]);
+    rows.push(["Date","Item","Category","Vendor","Qty","Rate","Total"]);
+    purchasesInDateRange(reportRange.from, reportRange.to).forEach(r=>{
+      const item = getItem(r.itemId);
+      rows.push([r.date, item?item.name:'', item?CATS[item.category].label:'', r.donorVendor||'', r.qty, r.rate, r.total]);
+    });
+    downloadCSV(`dus-store-finance-report-${todayStr()}.csv`, rows);
+    toast("Finance report exported");
     return;
   }
   if(reportTab==="daily"){
