@@ -801,7 +801,7 @@ let incomingFilter = { cat:"", source:"", from:"", to:"", q:"" };
 function renderIncoming(){
   const main = document.getElementById("mainContent");
   main.innerHTML = `
-    ${topbarHtml("Inward Entry","Record purchases and donations received", canEdit()?`<button class="btn btn-ghost btn-sm" onclick="openBulkInward()">${ICONS.plus}Bulk Entry (Multiple Items)</button><button class="btn btn-gold btn-sm" onclick="openIncomingForm()">${ICONS.plus}New Inward Entry</button>`:"")}
+    ${topbarHtml("Inward Entry","Record purchases and donations received", canEdit()?`<button class="btn btn-gold btn-sm" onclick="openBulkInward()">${ICONS.plus}New Entry</button>`:"")}
     <div class="panel">
       <div class="filter-bar">
         <div class="field"><label>Category</label>
@@ -972,7 +972,7 @@ function freshBulkRow(){ return { itemId:"", qty:"", rate:"", expiryDate:"", bat
 function resetBulkRows(n){ bulkRows = Array.from({length:n}, freshBulkRow); }
 
 function openBulkInward(){
-  resetBulkRows(10);
+  resetBulkRows(1);
   bulkShared = { date: todayStr(), sourceType: "Purchasing", vendor: "", invoiceNo: "" };
   renderBulkInward();
 }
@@ -980,7 +980,7 @@ function renderBulkInward(){
   const main = document.getElementById("mainContent");
   const grandTotal = bulkRows.reduce((s,r)=> s + (Number(r.qty)||0)*(Number(r.rate)||0), 0);
   main.innerHTML = `
-    ${topbarHtml("Bulk Inward Entry","One vendor/donor, many items — enter once, add each item as a row", `<button class="btn btn-ghost btn-sm" onclick="renderIncoming()">← Back to Inward List</button>`)}
+    ${topbarHtml("New Inward Entry","Add items received — click + Add Row for each item", `<button class="btn btn-ghost btn-sm" onclick="renderIncoming()">← Back to Inward List</button>`)}
     <div class="panel">
       <div class="form-grid" style="margin-bottom:18px;max-width:750px;">
         <div class="field"><label>Date</label><input type="date" id="bulk_date" value="${bulkShared.date}" onchange="bulkShared.date=this.value"></div>
@@ -1014,9 +1014,7 @@ function renderBulkInward(){
       </table>
       </div>
       <div style="display:flex;gap:10px;margin:14px 0;flex-wrap:wrap;">
-        <button class="btn btn-ghost btn-sm" onclick="addBulkRows(5)">${ICONS.plus} Add 5 Rows</button>
-        <button class="btn btn-ghost btn-sm" onclick="addBulkRows(20)">${ICONS.plus} Add 20 Rows</button>
-        <button class="btn btn-ghost btn-sm" onclick="addBulkRows(50)">${ICONS.plus} Add 50 Rows</button>
+        <button class="btn btn-gold btn-sm" onclick="addBulkRows(1)">${ICONS.plus} Add Row</button>
       </div>
       <div style="margin-bottom:16px;font-size:14px;color:var(--ink);">Grand Total: <b style="color:var(--gold-400);font-size:17px;">${fmtMoney(grandTotal)}</b> · <span class="text-dim">${bulkRows.filter(r=>r.itemId && Number(r.qty)>0).length} item(s) ready to save</span></div>
       <div class="form-actions">
@@ -1086,7 +1084,7 @@ let outgoingFilter = { dept:"", from:"", to:"", q:"" };
 function renderOutgoing(){
   const main = document.getElementById("mainContent");
   main.innerHTML = `
-    ${topbarHtml("Outward Entry","Record items issued to departments", canEdit()?`<button class="btn btn-ghost btn-sm" onclick="openBulkOutward()">${ICONS.plus}Bulk Entry (Multiple Items)</button><button class="btn btn-gold btn-sm" onclick="openOutgoingForm()">${ICONS.plus}New Outward Entry</button>`:"")}
+    ${topbarHtml("Outward Entry","Record items issued to departments", canEdit()?`<button class="btn btn-gold btn-sm" onclick="openBulkOutward()">${ICONS.plus}New Entry</button>`:"")}
     <div class="panel">
       <div class="filter-bar">
         <div class="field"><label>Department</label>
@@ -1342,14 +1340,14 @@ function freshBulkOutRow(){ return { itemId:"", qty:"" }; }
 function resetBulkOutRows(n){ bulkOutRows = Array.from({length:n}, freshBulkOutRow); }
 
 function openBulkOutward(){
-  resetBulkOutRows(10);
+  resetBulkOutRows(1);
   bulkOutShared = { date: todayStr(), locGroupIndex: 0, department: "", deptCustom: "", receiverName: "", purpose: "", approvedBy: "", received: false };
   renderBulkOutward();
 }
 function renderBulkOutward(){
   const main = document.getElementById("mainContent");
   main.innerHTML = `
-    ${topbarHtml("Bulk Outward Entry","One department/receiver, many items — enter once, add each item as a row", `<button class="btn btn-ghost btn-sm" onclick="renderOutgoing()">← Back to Outward List</button>`)}
+    ${topbarHtml("New Outward Entry","Add items issued — click + Add Row for each item", `<button class="btn btn-ghost btn-sm" onclick="renderOutgoing()">← Back to Outward List</button>`)}
     <div class="panel">
       <div class="form-grid" style="margin-bottom:14px;max-width:900px;">
         <div class="field"><label>Date</label><input type="date" id="bout_date" value="${bulkOutShared.date}" onchange="bulkOutShared.date=this.value"></div>
@@ -1394,9 +1392,7 @@ function renderBulkOutward(){
       </table>
       </div>
       <div style="display:flex;gap:10px;margin:14px 0;flex-wrap:wrap;">
-        <button class="btn btn-ghost btn-sm" onclick="addBulkOutRows(5)">${ICONS.plus} Add 5 Rows</button>
-        <button class="btn btn-ghost btn-sm" onclick="addBulkOutRows(20)">${ICONS.plus} Add 20 Rows</button>
-        <button class="btn btn-ghost btn-sm" onclick="addBulkOutRows(50)">${ICONS.plus} Add 50 Rows</button>
+        <button class="btn btn-gold btn-sm" onclick="addBulkOutRows(1)">${ICONS.plus} Add Row</button>
       </div>
       <div style="margin-bottom:16px;font-size:13px;color:var(--ink-dim);">${bulkOutRows.filter(r=>r.itemId && Number(r.qty)>0).length} item(s) ready to save</div>
       <div class="form-actions">
