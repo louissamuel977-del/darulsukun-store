@@ -401,6 +401,7 @@ function renderDashboard(){
   });
 
   const lowStock = DB.items.filter(it => stockOf(it.id) <= Number(it.reorderLevel||0));
+  const neverStockedItems = DB.items.filter(it => !DB.incoming.some(r=>r.itemId===it.id));
   const expiring = DB.incoming.filter(r=>{
     const d = daysUntil(r.expiryDate);
     return r.expiryDate && d !== null && d <= 30;
@@ -454,6 +455,21 @@ function renderDashboard(){
           }).join("")}
       </div>
     </div>
+    ${neverStockedItems.length>0 ? `
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title">New Items Awaiting First Stock Entry <span class="count">${neverStockedItems.length}</span></div>
+        <button class="btn btn-gold btn-sm" onclick="startInwardForNewItems()">${ICONS.plus} Enter Rate & Expiry Now</button>
+      </div>
+      ${neverStockedItems.map(it=>`
+        <div class="alert-item">
+          <div class="alert-left">
+            <span class="alert-dot dot-warn"></span>
+            <div><b>${escHtml(it.name)}</b> <span class="text-dim">(${itemCode(it.category,it.seq)})</span></div>
+          </div>
+          <div class="mono text-dim">no inward entry yet</div>
+        </div>`).join("")}
+    </div>` : ""}
     <div class="grid grid-2">
       <div class="panel">
         <div class="panel-head"><div class="panel-title">Recent Inward</div></div>
@@ -471,6 +487,15 @@ function renderDashboard(){
       </div>
     </div>
   `;
+}
+function startInwardForNewItems(){
+  const neverStocked = DB.items.filter(it => !DB.incoming.some(r=>r.itemId===it.id));
+  if(neverStocked.length===0){ toast("No new items awaiting stock"); return; }
+  bulkShared = { date: todayStr(), sourceType: "Purchasing", vendor: "", invoiceNo: "" };
+  bulkRows = neverStocked.map(it => ({ itemId: it.id, qty: "", rate: "", expiryDate: "", batchNo: "" }));
+  currentPage = "incoming";
+  renderNav();
+  renderBulkInward();
 }
 function statCard(label, barClass, value, delta){
   return `<div class="stat-card"><div class="bar ${barClass}"></div>
@@ -528,6 +553,11 @@ function itemsRows(){
   return list.map(it=>{
     const stock = stockOf(it.id);
     const low = stock <= Number(it.reorderLevel||0);
+    const neverStocked = !DB.incoming.some(r=>r.itemId===it.id);
+    let statusBadge;
+    if(neverStocked) statusBadge = '<span class="badge badge-warn">New — Needs Stock</span>';
+    else if(low) statusBadge = '<span class="badge badge-danger">Low Stock</span>';
+    else statusBadge = '<span class="badge badge-ok">OK</span>';
     return `<tr>
       <td class="mono">${itemCode(it.category,it.seq)}</td>
       <td><b>${escHtml(it.name)}</b></td>
@@ -535,7 +565,7 @@ function itemsRows(){
       <td>${escHtml(it.unit)}</td>
       <td class="mono">${stock}</td>
       <td class="mono">${it.reorderLevel}</td>
-      <td>${low?'<span class="badge badge-danger">Low Stock</span>':'<span class="badge badge-ok">OK</span>'}</td>
+      <td>${statusBadge}</td>
       ${isAdmin()?`<td class="row-actions">
         <button class="icon-btn" onclick="openItemForm('${it.id}')">${ICONS.edit}</button>
         ${isAdmin()?`<button class="icon-btn" onclick="deleteItem('${it.id}')">${ICONS.trash}</button>`:''}
@@ -851,24 +881,32 @@ function removeBulkItemRow(i){
 }
 function saveBulkItems(){
   let savedCount = 0;
+  const newItemIds = [];
   bulkItemRows.forEach(r=>{
     const name = r.name.trim();
     if(!name) return;
     const seq = uid("item");
-    DB.items.push({
+    const newItem = {
       id: "itm_"+Date.now()+"_"+savedCount,
       seq,
       name,
       category: r.category,
       unit: r.unit,
       reorderLevel: Number(r.reorderLevel)||0
-    });
+    };
+    DB.items.push(newItem);
+    newItemIds.push(newItem.id);
     savedCount++;
   });
   if(savedCount===0){ toast("No item names entered — nothing saved", true); return; }
   saveDB(DB);
-  toast(`${savedCount} item(s) added`);
-  renderItems();
+  toast(`${savedCount} item(s) added — now enter their rate & expiry below`);
+
+  // Hand straight off to Inward Entry with these new items pre-filled as rows,
+  // so the person can immediately record qty/rate/expiry for first stock-in.
+  bulkShared = { date: todayStr(), sourceType: "Purchasing", vendor: "", invoiceNo: "" };
+  bulkRows = newItemIds.map(id => ({ itemId: id, qty: "", rate: "", expiryDate: "", batchNo: "" }));
+  renderBulkInward();
 }
 
 /* ============================================================
