@@ -101,6 +101,13 @@ function sanitizeDB(raw){
   db.outgoing = db.outgoing.filter(r => r && typeof r === "object" && r.id);
   db.scrap = db.scrap.filter(r => r && typeof r === "object" && r.id);
   db.maintenance = db.maintenance.filter(r => r && typeof r === "object" && r.id);
+  // Deep-validate locationGroups: every group must have a name and a departments
+  // array, or a stale/partial sync (e.g. from a device on an older cached
+  // version) could crash every screen that reads it.
+  db.locationGroups = (Array.isArray(db.locationGroups) ? db.locationGroups : [])
+    .filter(g => g && typeof g === "object" && typeof g.name === "string")
+    .map(g => ({ name: g.name, departments: Array.isArray(g.departments) ? g.departments.filter(d=>typeof d==="string") : [], allowCustom: !!g.allowCustom }));
+  if(db.locationGroups.length === 0) db.locationGroups = base.locationGroups;
   return db;
 }
 
@@ -1085,7 +1092,7 @@ function renderOutgoing(){
         <div class="field"><label>Department</label>
           <select onchange="outgoingFilter.dept=this.value;renderOutgoing()">
             <option value="">All</option>
-            ${DB.locationGroups.map(g=>`<optgroup label="${escHtml(g.name)}">${g.departments.map(d=>`<option value="${escHtml(d)}" ${outgoingFilter.dept===d?'selected':''}>${escHtml(d)}</option>`).join("")}</optgroup>`).join("")}
+            ${DB.locationGroups.map(g=>`<optgroup label="${escHtml(g.name)}">${(Array.isArray(g.departments)?g.departments:[]).map(d=>`<option value="${escHtml(d)}" ${outgoingFilter.dept===d?'selected':''}>${escHtml(d)}</option>`).join("")}</optgroup>`).join("")}
           </select>
         </div>
         <div class="field"><label>From</label><input type="date" value="${outgoingFilter.from}" onchange="outgoingFilter.from=this.value;renderOutgoing()"></div>
@@ -1180,8 +1187,9 @@ function findGroupForDept(deptName){
 }
 function populateDeptSelect(groupIndex, selectedDept){
   const group = DB.locationGroups[groupIndex];
-  let opts = group.departments.map(d=>`<option value="${escHtml(d)}" ${selectedDept===d?'selected':''}>${escHtml(d)}</option>`).join("");
-  if(group.allowCustom){
+  const deptList = (group && Array.isArray(group.departments)) ? group.departments : [];
+  let opts = deptList.map(d=>`<option value="${escHtml(d)}" ${selectedDept===d?'selected':''}>${escHtml(d)}</option>`).join("");
+  if(group && group.allowCustom){
     opts += `<option value="__custom__">+ Type a new name...</option>`;
   }
   if(!opts){
@@ -1401,8 +1409,9 @@ function renderBulkOutward(){
 }
 function bulkOutPopulateDeptSelect(groupIndex, selectedDept){
   const group = DB.locationGroups[groupIndex];
-  let opts = group.departments.map(d=>`<option value="${escHtml(d)}" ${selectedDept===d?'selected':''}>${escHtml(d)}</option>`).join("");
-  if(group.allowCustom) opts += `<option value="__custom__">+ Type a new name...</option>`;
+  const deptList = (group && Array.isArray(group.departments)) ? group.departments : [];
+  let opts = deptList.map(d=>`<option value="${escHtml(d)}" ${selectedDept===d?'selected':''}>${escHtml(d)}</option>`).join("");
+  if(group && group.allowCustom) opts += `<option value="__custom__">+ Type a new name...</option>`;
   if(!opts) opts = `<option value="__custom__">+ Type a name...</option>`;
   document.getElementById("bout_dept").innerHTML = opts;
 }
@@ -2111,10 +2120,30 @@ function renderReports(){
         <button class="btn btn-ghost btn-sm" onclick="exportReport()">${ICONS.download} Export CSV</button>
         <button class="btn btn-ghost btn-sm" onclick="window.print()">Print</button>
       </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
+        <button class="btn btn-ghost btn-sm" onclick="setReportRangePreset('today')">Today</button>
+        <button class="btn btn-ghost btn-sm" onclick="setReportRangePreset('week')">This Week</button>
+        <button class="btn btn-ghost btn-sm" onclick="setReportRangePreset('month')">This Month</button>
+        <button class="btn btn-ghost btn-sm" onclick="setReportRangePreset('year')">This Year</button>
+        <button class="btn btn-ghost btn-sm" onclick="setReportRangePreset('last7')">Last 7 Days</button>
+        <button class="btn btn-ghost btn-sm" onclick="setReportRangePreset('last30')">Last 30 Days</button>
+        <button class="btn btn-ghost btn-sm" onclick="setReportRangePreset('all')">All Time</button>
+      </div>
       <div id="reportBody"></div>
     </div>
   `;
   document.getElementById("reportBody").innerHTML = buildReport();
+}
+function setReportRangePreset(preset){
+  const today = todayStr();
+  if(preset==="today"){ reportRange.from = today; reportRange.to = today; }
+  else if(preset==="week"){ reportRange.from = dateNDaysAgo(6); reportRange.to = today; }
+  else if(preset==="month"){ reportRange.from = today.slice(0,8)+"01"; reportRange.to = today; }
+  else if(preset==="year"){ reportRange.from = today.slice(0,4)+"-01-01"; reportRange.to = today; }
+  else if(preset==="last7"){ reportRange.from = dateNDaysAgo(6); reportRange.to = today; }
+  else if(preset==="last30"){ reportRange.from = dateNDaysAgo(29); reportRange.to = today; }
+  else if(preset==="all"){ reportRange.from = "2020-01-01"; reportRange.to = today; }
+  renderReports();
 }
 function inRange(dateStr){
   return (!reportRange.from || dateStr>=reportRange.from) && (!reportRange.to || dateStr<=reportRange.to);
