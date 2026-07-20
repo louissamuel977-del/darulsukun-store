@@ -495,7 +495,7 @@ let itemFilter = { cat:"", q:"" };
 function renderItems(){
   const main = document.getElementById("mainContent");
   main.innerHTML = `
-    ${topbarHtml("Item Master","Manage all store items across categories", canEdit()?`<button class="btn btn-gold btn-sm" onclick="openItemForm()">${ICONS.plus}Add Item</button>`:"")}
+    ${topbarHtml("Item Master","Manage all store items across categories", canEdit()?`<button class="btn btn-gold btn-sm" onclick="openBulkItems()">${ICONS.plus}New Item</button>`:"")}
     <div class="panel">
       <div class="filter-bar">
         <div class="field"><label>Category</label>
@@ -791,6 +791,83 @@ function deleteItem(id){
   DB.scrap = DB.scrap.filter(r=>r.itemId!==id);
   saveDB(DB);
   toast(relatedCount>0 ? `Item and ${relatedCount} related record(s) deleted` : "Item deleted", false, undoMultiple(logIds));
+  renderItems();
+}
+
+/* ============================================================
+   BULK ITEM ENTRY — add many new items at once, row by row.
+   ============================================================ */
+let bulkItemRows = [];
+function freshBulkItemRow(){ return { name:"", category:"household", unit:"pcs", reorderLevel:0 }; }
+function resetBulkItemRows(n){ bulkItemRows = Array.from({length:n}, freshBulkItemRow); }
+
+function openBulkItems(){
+  resetBulkItemRows(1);
+  renderBulkItems();
+}
+function renderBulkItems(){
+  const main = document.getElementById("mainContent");
+  const UNITS = ["pcs","kg","g","litre","ml","packet","box","carton","bottle","dozen"];
+  main.innerHTML = `
+    ${topbarHtml("New Item","Add items to Item Master — click + Add Row for each item", `<button class="btn btn-ghost btn-sm" onclick="renderItems()">← Back to Item Master</button>`)}
+    <div class="panel">
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th style="min-width:200px;">Item Name</th><th>Category</th><th>Unit</th><th>Reorder Level</th><th></th></tr></thead>
+        <tbody>
+          ${bulkItemRows.map((r,i)=>`
+            <tr>
+              <td><input type="text" id="bi_name_${i}" value="${escHtml(r.name)}" oninput="bulkItemRows[${i}].name=this.value" placeholder="e.g. Cooking Oil 5L" style="min-width:190px;padding:6px 8px;"></td>
+              <td><select id="bi_cat_${i}" onchange="bulkItemRows[${i}].category=this.value">
+                ${Object.entries(CATS).map(([k,v])=>`<option value="${k}" ${r.category===k?'selected':''}>${v.label}</option>`).join("")}
+              </select></td>
+              <td><select id="bi_unit_${i}" onchange="bulkItemRows[${i}].unit=this.value">
+                ${UNITS.map(u=>`<option value="${u}" ${r.unit===u?'selected':''}>${u}</option>`).join("")}
+              </select></td>
+              <td><input type="number" id="bi_reorder_${i}" value="${r.reorderLevel}" min="0" style="width:90px;padding:6px 8px;" oninput="bulkItemRows[${i}].reorderLevel=this.value"></td>
+              <td><button class="icon-btn" onclick="removeBulkItemRow(${i})">${ICONS.trash}</button></td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+      </div>
+      <div style="margin:14px 0;">
+        <button class="btn btn-gold btn-sm" onclick="addBulkItemRows(1)">${ICONS.plus} Add Row</button>
+      </div>
+      <div style="margin-bottom:16px;font-size:13px;color:var(--ink-dim);">${bulkItemRows.filter(r=>r.name.trim()).length} item(s) ready to save</div>
+      <div class="form-actions">
+        <button class="btn btn-gold btn-sm" onclick="saveBulkItems()">${ICONS.check} Save All Items</button>
+        <button class="btn btn-ghost btn-sm" onclick="renderItems()">Cancel</button>
+      </div>
+    </div>
+  `;
+}
+function addBulkItemRows(n){
+  for(let k=0;k<n;k++) bulkItemRows.push(freshBulkItemRow());
+  renderBulkItems();
+}
+function removeBulkItemRow(i){
+  bulkItemRows.splice(i,1);
+  renderBulkItems();
+}
+function saveBulkItems(){
+  let savedCount = 0;
+  bulkItemRows.forEach(r=>{
+    const name = r.name.trim();
+    if(!name) return;
+    const seq = uid("item");
+    DB.items.push({
+      id: "itm_"+Date.now()+"_"+savedCount,
+      seq,
+      name,
+      category: r.category,
+      unit: r.unit,
+      reorderLevel: Number(r.reorderLevel)||0
+    });
+    savedCount++;
+  });
+  if(savedCount===0){ toast("No item names entered — nothing saved", true); return; }
+  saveDB(DB);
+  toast(`${savedCount} item(s) added`);
   renderItems();
 }
 
