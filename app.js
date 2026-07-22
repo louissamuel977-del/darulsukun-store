@@ -159,6 +159,7 @@ function initFirebase(){
       }
       setSyncStatus("online");
       if(CURRENT_USER) goTo(currentPage);
+      checkWeeklyAutoBackup();
     });
 
     fbRef.on("value", snap=>{
@@ -178,6 +179,69 @@ function initFirebase(){
     console.error("Firebase init failed:", err);
     setSyncStatus("offline-only");
   }
+}
+/* ============================================================
+   WEEKLY AUTO-BACKUP — runs silently in the background once a
+   week (no one needs to remember). Saves a full snapshot to a
+   separate Firebase path, keeps the last 12 weeks automatically.
+   ============================================================ */
+function checkWeeklyAutoBackup(){
+  if(!FIREBASE_ENABLED) return;
+  const metaRef = firebase.database().ref("dus_store_meta/lastBackupDate");
+  metaRef.once("value").then(snap=>{
+    const last = snap.val();
+    const today = todayStr();
+    if(last){
+      const daysSince = Math.round((new Date(today) - new Date(last)) / (1000*60*60*24));
+      if(daysSince < 7) return;
+    }
+    firebase.database().ref("dus_store_backups/"+today).set(DB).then(()=>{
+      metaRef.set(today);
+      pruneOldAutoBackups();
+    }).catch(err=>console.error("Auto-backup failed:", err));
+  }).catch(err=>console.error("Auto-backup check failed:", err));
+}
+function pruneOldAutoBackups(){
+  firebase.database().ref("dus_store_backups").once("value").then(snap=>{
+    const val = snap.val();
+    if(!val) return;
+    const dates = Object.keys(val).sort();
+    if(dates.length<=12) return;
+    const toRemove = dates.slice(0, dates.length-12);
+    toRemove.forEach(d => firebase.database().ref("dus_store_backups/"+d).remove());
+  });
+}
+function listAutoBackups(){
+  if(!FIREBASE_ENABLED){
+    document.getElementById("autoBackupList").innerHTML = `<p class="text-dim" style="font-size:12.5px;">Offline mode — auto-backups need an internet connection.</p>`;
+    return;
+  }
+  firebase.database().ref("dus_store_backups").once("value").then(snap=>{
+    const val = snap.val();
+    const dates = val ? Object.keys(val).sort().reverse() : [];
+    const el = document.getElementById("autoBackupList");
+    if(!el) return;
+    if(dates.length===0){
+      el.innerHTML = `<p class="text-dim" style="font-size:12.5px;">No auto-backups yet — the first one is saved automatically within a week of using the system.</p>`;
+      return;
+    }
+    el.innerHTML = dates.map(d=>`
+      <div class="alert-item">
+        <div class="alert-left">${fmtDate(d)}</div>
+        ${isAdmin()?`<button class="btn btn-ghost btn-sm" onclick="restoreAutoBackup('${d}')">Restore This</button>`:''}
+      </div>`).join("");
+  });
+}
+function restoreAutoBackup(dateKey){
+  if(!confirm(`Restore the backup from ${fmtDate(dateKey)}? This will replace all current data.`)) return;
+  firebase.database().ref("dus_store_backups/"+dateKey).once("value").then(snap=>{
+    const data = snap.val();
+    if(!data){ toast("Backup not found", true); return; }
+    DB = sanitizeDB(data);
+    saveDB(DB);
+    toast("Restored from "+fmtDate(dateKey));
+    renderSettings();
+  });
 }
 function setSyncStatus(state){
   const el = document.getElementById("syncStatus");
@@ -3100,6 +3164,14 @@ function renderSettings(){
           </label>
         </div>
       </div>
+      <div class="panel">
+        <div class="panel-title" style="margin-bottom:14px;">Weekly Auto-Backup <span class="badge badge-ok" style="margin-left:6px;">Automatic</span></div>
+        <p class="text-dim" style="font-size:13px;margin-bottom:16px;line-height:1.6;">
+          The system automatically saves a full snapshot to the cloud every week — no need to remember.
+          The last 12 weeks are kept. You can restore any of them here if needed.
+        </p>
+        <div id="autoBackupList" style="max-height:220px;overflow-y:auto;"><p class="text-dim" style="font-size:12.5px;">Loading...</p></div>
+      </div>
       ${isAdmin()?`
       <div class="panel">
         <div class="panel-head">
@@ -3136,6 +3208,7 @@ function renderSettings(){
       <button class="btn btn-danger btn-sm" onclick="resetAllData()">Reset All Data</button>
     </div>` : ""}
   `;
+  listAutoBackups();
 }
 function openUserForm(username){
   const user = username ? DB.users.find(u=>u.username===username) : null;
