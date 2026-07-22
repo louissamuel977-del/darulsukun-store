@@ -30,7 +30,8 @@ const ICONS = {
   scrap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6M10 11v6M14 11v6"/></svg>',
   undo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6M3 13a9 9 0 1 0 3-6.7L3 9"/></svg>',
   maintenance: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L2 19l3 3 7.3-7.3a4 4 0 0 0 5.4-5.4l-2.8 2.8-2-2 2.8-2.8Z"/></svg>',
-  finance: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18M7 15l4-5 3 3 5-7"/></svg>'
+  finance: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18M7 15l4-5 3 3 5-7"/></svg>',
+  po: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 2h6a1 1 0 0 1 1 1v2H8V3a1 1 0 0 1 1-1Z"/><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2M9 12h6M9 16h6M9 8h2"/></svg>'
 };
 
 function defaultDB(){
@@ -52,9 +53,10 @@ function defaultDB(){
     outgoing: [],
     scrap: [],
     maintenance: [],
+    purchaseOrders: [],
     deletionLog: [],
     auditPin: "1955",
-    seq: { item: 0, incoming: 0, outgoing: 0, scrap: 0, maintenance: 0 }
+    seq: { item: 0, incoming: 0, outgoing: 0, scrap: 0, maintenance: 0, po: 0 }
   };
 }
 
@@ -81,6 +83,7 @@ function sanitizeDB(raw){
     outgoing: toArray(raw.outgoing),
     scrap: toArray(raw.scrap),
     maintenance: toArray(raw.maintenance),
+    purchaseOrders: toArray(raw.purchaseOrders),
     deletionLog: toArray(raw.deletionLog),
     auditPin: (typeof raw.auditPin === "string" && raw.auditPin) ? raw.auditPin : base.auditPin,
     seq: (raw.seq && typeof raw.seq === "object") ? {
@@ -88,7 +91,8 @@ function sanitizeDB(raw){
       incoming: Number(raw.seq.incoming)||0,
       outgoing: Number(raw.seq.outgoing)||0,
       scrap: Number(raw.seq.scrap)||0,
-      maintenance: Number(raw.seq.maintenance)||0
+      maintenance: Number(raw.seq.maintenance)||0,
+      po: Number(raw.seq.po)||0
     } : base.seq
   };
   // Drop any item/entry that isn't a valid object, and fix unknown categories
@@ -101,6 +105,7 @@ function sanitizeDB(raw){
   db.outgoing = db.outgoing.filter(r => r && typeof r === "object" && r.id);
   db.scrap = db.scrap.filter(r => r && typeof r === "object" && r.id);
   db.maintenance = db.maintenance.filter(r => r && typeof r === "object" && r.id);
+  db.purchaseOrders = db.purchaseOrders.filter(r => r && typeof r === "object" && r.id);
   // Deep-validate locationGroups: every group must have a name and a departments
   // array, or a stale/partial sync (e.g. from a device on an older cached
   // version) could crash every screen that reads it.
@@ -242,6 +247,7 @@ const NAV_ITEMS = [
   { id:"dashboard", label:"Dashboard", icon:"dashboard" },
   { id:"items", label:"Item Master", icon:"items" },
   { id:"incoming", label:"Inward Entry", icon:"incoming" },
+  { id:"purchaseorders", label:"Purchase Orders", icon:"po" },
   { id:"outgoing", label:"Outward Entry", icon:"outgoing" },
   { id:"diapers", label:"Diaper Issue", icon:"diaper" },
   { id:"scrap", label:"Scrap / Wastage", icon:"scrap" },
@@ -266,6 +272,7 @@ function goTo(page){
     dashboard: renderDashboard,
     items: renderItems,
     incoming: renderIncoming,
+    purchaseorders: renderPurchaseOrders,
     outgoing: renderOutgoing,
     diapers: renderDiaperIssue,
     scrap: renderScrap,
@@ -702,6 +709,7 @@ function restoreDeletedRecord(logId, fromToast){
   else if(log.type==="outgoing") DB.outgoing.push(log.data);
   else if(log.type==="scrap") DB.scrap.push(log.data);
   else if(log.type==="maintenance") DB.maintenance.push(log.data);
+  else if(log.type==="po") DB.purchaseOrders.push(log.data);
 
   DB.deletionLog = DB.deletionLog.filter(l=>l.id!==logId);
   saveDB(DB);
@@ -776,6 +784,10 @@ function describeDeletedRecord(l){
   }
   if(l.type==="maintenance"){
     return `<b>${escHtml(d.itemName)}</b> — ${escHtml(d.category)}, ${fmtMoney(d.total)}, ${fmtDate(d.date)}`;
+  }
+  if(l.type==="po"){
+    const total = (d.items||[]).reduce((s,it)=>s+Number(it.total||0),0);
+    return `<b>${escHtml(d.poNumber)}</b> — ${(d.items||[]).length} items, ${fmtMoney(total)}, ${fmtDate(d.date)}`;
   }
   return "Unknown record";
 }
@@ -910,13 +922,228 @@ function saveBulkItems(){
 }
 
 /* ============================================================
+   PURCHASE ORDERS — create a PO for items to be bought, print it,
+   and later "Receive" it into Inward Entry once goods arrive.
+   ============================================================ */
+let poRows = [];
+let poShared = { date: todayStr(), vendor: "" };
+let pendingReceivePOId = null;
+
+function freshPORow(){ return { itemName:"", unit:"pcs", category:"household", rate:"", qty:"" }; }
+
+function openNewPO(){
+  poRows = [freshPORow()];
+  poShared = { date: todayStr(), vendor: "" };
+  renderPOForm();
+}
+function renderPOForm(){
+  const main = document.getElementById("mainContent");
+  const UNITS = ["pcs","kg","g","litre","ml","packet","box","carton","bottle","dozen"];
+  const grandTotal = poRows.reduce((s,r)=> s + (Number(r.qty)||0)*(Number(r.rate)||0), 0);
+  main.innerHTML = `
+    ${topbarHtml("New Purchase Order","List what needs to be bought — click + Add Row for each item", `<button class="btn btn-ghost btn-sm" onclick="renderPurchaseOrders()">← Back to Purchase Orders</button>`)}
+    <div class="panel">
+      <div class="form-grid" style="margin-bottom:18px;max-width:600px;">
+        <div class="field"><label>Date</label><input type="date" id="po_date" value="${poShared.date}" onchange="poShared.date=this.value"></div>
+        <div class="field" style="grid-column:span 2;"><label>Vendor (optional)</label><input type="text" id="po_vendor" value="${escHtml(poShared.vendor)}" oninput="poShared.vendor=this.value" placeholder="e.g. Imtiaz Market"></div>
+      </div>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th style="min-width:200px;">Item Name</th><th>Unit</th><th>Category</th><th>Rate</th><th>Qty</th><th>Total</th><th></th></tr></thead>
+        <tbody>
+          ${poRows.map((r,i)=>`
+            <tr>
+              <td><input type="text" id="po_name_${i}" value="${escHtml(r.itemName)}" oninput="poRows[${i}].itemName=this.value" placeholder="e.g. Cooking Oil 5L" style="min-width:190px;padding:6px 8px;"></td>
+              <td><select id="po_unit_${i}" onchange="poRows[${i}].unit=this.value">${UNITS.map(u=>`<option value="${u}" ${r.unit===u?'selected':''}>${u}</option>`).join("")}</select></td>
+              <td><select id="po_cat_${i}" onchange="poRows[${i}].category=this.value">${Object.entries(CATS).map(([k,v])=>`<option value="${k}" ${r.category===k?'selected':''}>${v.label}</option>`).join("")}</select></td>
+              <td><input type="number" id="po_rate_${i}" value="${r.rate}" min="0" style="width:85px;padding:6px 8px;" oninput="poRows[${i}].rate=this.value;updatePORowTotal(${i})"></td>
+              <td><input type="number" id="po_qty_${i}" value="${r.qty}" min="0" style="width:70px;padding:6px 8px;" oninput="poRows[${i}].qty=this.value;updatePORowTotal(${i})"></td>
+              <td class="mono" id="po_total_${i}" style="font-weight:600;color:var(--gold-400);">${fmtMoney((Number(r.qty)||0)*(Number(r.rate)||0))}</td>
+              <td><button class="icon-btn" onclick="removePORow(${i})">${ICONS.trash}</button></td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+      </div>
+      <div style="margin:14px 0;">
+        <button class="btn btn-gold btn-sm" onclick="addPORows(1)">${ICONS.plus} Add Row</button>
+      </div>
+      <div style="margin-bottom:16px;font-size:14px;">Grand Total: <b style="color:var(--gold-400);font-size:17px;">${fmtMoney(grandTotal)}</b></div>
+      <div class="form-actions">
+        <button class="btn btn-gold btn-sm" onclick="savePO()">${ICONS.check} Create Purchase Order</button>
+        <button class="btn btn-ghost btn-sm" onclick="renderPurchaseOrders()">Cancel</button>
+      </div>
+    </div>
+  `;
+}
+function updatePORowTotal(i){
+  const qty = Number(document.getElementById(`po_qty_${i}`).value)||0;
+  const rate = Number(document.getElementById(`po_rate_${i}`).value)||0;
+  document.getElementById(`po_total_${i}`).textContent = fmtMoney(qty*rate);
+}
+function addPORows(n){
+  for(let k=0;k<n;k++) poRows.push(freshPORow());
+  renderPOForm();
+}
+function removePORow(i){
+  poRows.splice(i,1);
+  renderPOForm();
+}
+function savePO(){
+  const date = poShared.date || todayStr();
+  const vendor = poShared.vendor.trim();
+  const items = poRows.filter(r=>r.itemName.trim() && Number(r.qty)>0).map(r=>({
+    itemName: r.itemName.trim(),
+    unit: r.unit,
+    category: r.category,
+    rate: Number(r.rate)||0,
+    qty: Number(r.qty)||0,
+    total: (Number(r.rate)||0)*(Number(r.qty)||0)
+  }));
+  if(items.length===0){ toast("Add at least one item with a quantity", true); return; }
+
+  const seq = uid("po");
+  const poNumber = "PO-"+String(seq).padStart(4,"0");
+  DB.purchaseOrders.push({
+    id: "po_"+Date.now(),
+    poNumber, date, vendor, items,
+    status: "Pending",
+    createdBy: CURRENT_USER.name,
+    receivedBy: "", receivedDate: ""
+  });
+  saveDB(DB);
+  toast(`${poNumber} created`);
+  renderPurchaseOrders();
+}
+function renderPurchaseOrders(){
+  const main = document.getElementById("mainContent");
+  const list = [...DB.purchaseOrders].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  main.innerHTML = `
+    ${topbarHtml("Purchase Orders","Create POs for planned purchases, print them, then receive into stock", canEdit()?`<button class="btn btn-gold btn-sm" onclick="openNewPO()">${ICONS.plus}New Purchase Order</button>`:"")}
+    <div class="panel">
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>PO Number</th><th>Date</th><th>Vendor</th><th>Items</th><th>Total</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody>
+          ${list.length===0?`<tr><td colspan="7">${emptyState("No purchase orders yet.")}</td></tr>`:list.map(po=>{
+            const total = po.items.reduce((s,it)=>s+Number(it.total||0),0);
+            return `<tr>
+              <td class="mono">${escHtml(po.poNumber)}</td>
+              <td>${fmtDate(po.date)}</td>
+              <td>${escHtml(po.vendor||'-')}</td>
+              <td class="mono">${po.items.length}</td>
+              <td class="mono">${fmtMoney(total)}</td>
+              <td>${po.status==='Received'?'<span class="badge badge-ok">Received</span>':'<span class="badge badge-warn">Pending</span>'}</td>
+              <td class="row-actions">
+                <button class="icon-btn" onclick="printPO('${po.id}')">${ICONS.download}</button>
+                ${po.status==='Pending' && canEdit() ? `<button class="btn btn-gold btn-sm" onclick="receivePO('${po.id}')">Receive</button>` : ''}
+                ${isAdmin()?`<button class="icon-btn" onclick="deletePO('${po.id}')">${ICONS.trash}</button>`:''}
+              </td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+      </div>
+    </div>
+  `;
+}
+function printPO(id){
+  const po = DB.purchaseOrders.find(p=>p.id===id);
+  if(!po) return;
+  const logoUrl = location.origin + location.pathname.replace(/[^/]*$/, "") + "logo.jpg";
+  const total = po.items.reduce((s,it)=>s+Number(it.total||0),0);
+  const rowsHtml = po.items.map(it=>`
+    <tr><td>${escHtml(it.itemName)}</td><td>${CATS[it.category]?CATS[it.category].label:it.category}</td><td>${escHtml(it.unit)}</td><td style="text-align:right;">${it.rate.toLocaleString()}</td><td style="text-align:right;">${it.qty}</td><td style="text-align:right;">${it.total.toLocaleString()}</td></tr>`).join("");
+  const win = window.open("", "_blank");
+  win.document.write(`
+    <html><head><title>${po.poNumber}</title>
+    <style>
+      body{font-family:Arial,sans-serif;padding:30px;color:#000;}
+      .header{display:flex;align-items:center;gap:16px;border-bottom:3px solid #B8860B;padding-bottom:14px;margin-bottom:20px;}
+      .header img{width:56px;height:56px;border-radius:50%;}
+      h1{font-size:19px;margin:0;}
+      .sub{font-size:11px;color:#555;margin-top:2px;}
+      .meta{display:flex;justify-content:space-between;margin:16px 0;font-size:13px;}
+      table{width:100%;border-collapse:collapse;font-size:12px;margin-top:10px;}
+      th,td{text-align:left;padding:8px;border-bottom:1px solid #ccc;}
+      th{background:#f2f2f2;}
+      .total-row{font-weight:bold;font-size:14px;text-align:right;margin-top:10px;}
+      .sign{display:flex;justify-content:space-between;margin-top:60px;font-size:12px;}
+      .sign div{border-top:1px solid #000;padding-top:6px;width:200px;text-align:center;}
+    </style></head>
+    <body>
+      <div class="header">
+        <img src="${logoUrl}">
+        <div>
+          <h1>Dar-ul-Sukun Head Office Store — Purchase Order</h1>
+          <div class="sub">Powered by Nexora Digital Marketing Agency</div>
+        </div>
+      </div>
+      <div class="meta">
+        <div><b>PO Number:</b> ${escHtml(po.poNumber)}<br><b>Date:</b> ${fmtDate(po.date)}</div>
+        <div><b>Vendor:</b> ${escHtml(po.vendor||'-')}<br><b>Status:</b> ${escHtml(po.status)}</div>
+      </div>
+      <table><thead><tr><th>Item</th><th>Category</th><th>Unit</th><th style="text-align:right;">Rate</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Total</th></tr></thead>
+      <tbody>${rowsHtml}</tbody></table>
+      <div class="total-row">Grand Total: Rs ${total.toLocaleString()}</div>
+      <div class="sign">
+        <div>Prepared By</div>
+        <div>Approved By</div>
+      </div>
+    </body></html>
+  `);
+  win.document.close();
+  setTimeout(()=>win.print(), 400);
+}
+function receivePO(id){
+  const po = DB.purchaseOrders.find(p=>p.id===id);
+  if(!po) return;
+  bulkShared = { date: todayStr(), sourceType: "Purchasing", vendor: po.vendor || "", invoiceNo: "" };
+  bulkRows = po.items.map(it=>{
+    const item = findOrCreateItemByName(it.itemName, it.category, it.unit);
+    return { itemId: item.id, qty: it.qty, rate: it.rate, expiryDate: "", batchNo: "" };
+  });
+  pendingReceivePOId = id;
+  currentPage = "incoming";
+  renderNav();
+  renderBulkInward();
+}
+function findOrCreateItemByName(name, category, unit){
+  let item = DB.items.find(i => i.name.trim().toLowerCase() === name.trim().toLowerCase());
+  if(item) return item;
+  const seq = uid("item");
+  item = { id:"itm_"+Date.now()+"_"+Math.random().toString(36).slice(2,6), seq, name: name.trim(), category, unit, reorderLevel: 0 };
+  DB.items.push(item);
+  return item;
+}
+function deletePO(id){
+  if(!confirm("Delete this purchase order?")) return;
+  const po = DB.purchaseOrders.find(p=>p.id===id);
+  const logId = po ? logDeletion("po", po) : null;
+  DB.purchaseOrders = DB.purchaseOrders.filter(p=>p.id!==id);
+  saveDB(DB);
+  toast("Purchase order deleted", false, logId ? undoMultiple([logId]) : null);
+  renderPurchaseOrders();
+}
+
+/* ============================================================
    INCOMING ENTRY (Purchasing + Donations)
    ============================================================ */
 let incomingFilter = { cat:"", source:"", from:"", to:"", q:"" };
 function renderIncoming(){
+  pendingReceivePOId = null;
   const main = document.getElementById("mainContent");
+  const pendingPOs = DB.purchaseOrders.filter(p=>p.status==="Pending");
   main.innerHTML = `
     ${topbarHtml("Inward Entry","Record purchases and donations received", canEdit()?`<button class="btn btn-gold btn-sm" onclick="openBulkInward()">${ICONS.plus}New Entry</button>`:"")}
+    ${pendingPOs.length>0?`
+    <div class="panel" style="border-color:var(--gold-500);">
+      <div class="panel-head"><div class="panel-title">Pending Purchase Orders — Awaiting Receiving <span class="count">${pendingPOs.length}</span></div></div>
+      <div class="table-wrap"><table><thead><tr><th>PO Number</th><th>Date</th><th>Vendor</th><th>Items</th><th>Total</th><th></th></tr></thead>
+      <tbody>${pendingPOs.map(po=>{
+        const total = po.items.reduce((s,it)=>s+Number(it.total||0),0);
+        return `<tr><td class="mono">${escHtml(po.poNumber)}</td><td>${fmtDate(po.date)}</td><td>${escHtml(po.vendor||'-')}</td><td class="mono">${po.items.length}</td><td class="mono">${fmtMoney(total)}</td><td>${canEdit()?`<button class="btn btn-gold btn-sm" onclick="receivePO('${po.id}')">Receive</button>`:''}</td></tr>`;
+      }).join("")}</tbody></table></div>
+    </div>` : ""}
     <div class="panel">
       <div class="filter-bar">
         <div class="field"><label>Category</label>
@@ -1188,6 +1415,21 @@ function saveBulkInward(){
 
   if(savedCount===0){ toast("No rows had both an item and a qty — nothing saved", true); return; }
   saveDB(DB);
+
+  if(pendingReceivePOId){
+    const po = DB.purchaseOrders.find(p=>p.id===pendingReceivePOId);
+    if(po){
+      po.status = "Received";
+      po.receivedBy = CURRENT_USER.name;
+      po.receivedDate = date;
+      saveDB(DB);
+    }
+    pendingReceivePOId = null;
+    toast(`${savedCount} items received against Purchase Order`);
+    renderPurchaseOrders();
+    return;
+  }
+
   toast(`${savedCount} inward entries saved from ${vendor}`);
   renderIncoming();
 }
@@ -2222,6 +2464,9 @@ function renderReports(){
             <option value="expiry" ${reportTab==='expiry'?'selected':''}>Expired / Near-Expiry Report</option>
             <option value="scrapreport" ${reportTab==='scrapreport'?'selected':''}>Scrap / Wastage Report</option>
             <option value="maintreport" ${reportTab==='maintreport'?'selected':''}>Maintenance Report</option>
+            <option value="stockledger" ${reportTab==='stockledger'?'selected':''}>Stock Ledger (Beginning/Input/Output/Ending)</option>
+            <option value="inwardfile" ${reportTab==='inwardfile'?'selected':''}>Inward File (All Records)</option>
+            <option value="outwardfile" ${reportTab==='outwardfile'?'selected':''}>Outward File (All Records)</option>
             <option value="stockregister" ${reportTab==='stockregister'?'selected':''}>Full Stock Register</option>
             <option value="diaperreport" ${reportTab==='diaperreport'?'selected':''}>Diaper Issue Report (by Size)</option>
           </select>
@@ -2265,6 +2510,27 @@ function buildReport(){
   }
   if(reportTab==="financereport"){
     return buildFinanceReport();
+  }
+  if(reportTab==="stockledger"){
+    return buildStockLedger();
+  }
+  if(reportTab==="inwardfile"){
+    const rows = DB.incoming.filter(r=>inRange(r.date)).sort((a,b)=>new Date(b.date)-new Date(a.date));
+    if(!rows.length) return emptyState("No inward records in this date range.");
+    return `<div class="table-wrap"><table><thead><tr><th>Date</th><th>Item</th><th>Category</th><th>Source</th><th>Vendor/Donor</th><th>Qty</th><th>Rate</th><th>Total</th><th>Expiry</th><th>Batch</th><th>Invoice</th><th>Entered By</th></tr></thead>
+      <tbody>${rows.map(r=>{
+        const item = getItem(r.itemId);
+        return `<tr><td>${fmtDate(r.date)}</td><td>${item?escHtml(item.name):'-'}</td><td>${item?CATS[item.category].label:'-'}</td><td><span class="badge ${r.sourceType==='Donation'?'badge-ok':'badge-warn'}">${r.sourceType}</span></td><td>${escHtml(r.donorVendor||'-')}</td><td class="mono">${r.qty}</td><td class="mono">${fmtMoney(r.rate)}</td><td class="mono">${fmtMoney(r.total)}</td><td>${r.expiryDate?fmtDate(r.expiryDate):'-'}</td><td>${escHtml(r.batchNo||'-')}</td><td>${escHtml(r.invoiceNo||'-')}</td><td>${escHtml(r.enteredBy||'-')}</td></tr>`;
+      }).join("")}</tbody></table></div>`;
+  }
+  if(reportTab==="outwardfile"){
+    const rows = DB.outgoing.filter(r=>inRange(r.date)).sort((a,b)=>new Date(b.date)-new Date(a.date));
+    if(!rows.length) return emptyState("No outward records in this date range.");
+    return `<div class="table-wrap"><table><thead><tr><th>Date</th><th>Item</th><th>Category</th><th>Qty</th><th>Department</th><th>Receiver</th><th>Purpose</th><th>Approved By</th><th>Received</th><th>Entered By</th></tr></thead>
+      <tbody>${rows.map(r=>{
+        const item = getItem(r.itemId);
+        return `<tr><td>${fmtDate(r.date)}</td><td>${item?escHtml(item.name):'-'}</td><td>${item?CATS[item.category].label:'-'}</td><td class="mono">${r.qty}</td><td>${escHtml(r.department)}</td><td>${escHtml(r.receiverName)}</td><td>${escHtml(r.purpose||'-')}</td><td>${escHtml(r.approvedBy||'-')}</td><td>${r.received?'Yes':'Pending'}</td><td>${escHtml(r.enteredBy||'-')}</td></tr>`;
+      }).join("")}</tbody></table></div>`;
   }
   if(reportTab==="daily"){
     const inc = DB.incoming.filter(r=>inRange(r.date));
@@ -2485,6 +2751,88 @@ function buildFinanceReport(){
     }).join(""):`<tr><td colspan="7">${emptyState("No purchases in this range")}</td></tr>`}</tbody></table></div>
   `;
 }
+let ledgerDeptFilter = "";
+function stockAsOfDate(itemId, beforeDate){
+  const inn = DB.incoming.filter(r=>r.itemId===itemId && r.date<beforeDate).reduce((s,r)=>s+Number(r.qty),0);
+  const out = DB.outgoing.filter(r=>r.itemId===itemId && r.date<beforeDate).reduce((s,r)=>s+Number(r.qty),0);
+  const scr = DB.scrap.filter(r=>r.itemId===itemId && r.date<beforeDate).reduce((s,r)=>s+Number(r.qty),0);
+  return inn - out - scr;
+}
+function avgCostAsOfDate(itemId, beforeDate){
+  const purchases = DB.incoming.filter(r=>r.itemId===itemId && r.date<beforeDate && r.sourceType==="Purchasing" && Number(r.rate)>0);
+  if(!purchases.length) return 0;
+  const totalQty = purchases.reduce((s,r)=>s+Number(r.qty),0);
+  const totalCost = purchases.reduce((s,r)=>s+Number(r.total||0),0);
+  return totalQty>0 ? totalCost/totalQty : 0;
+}
+function setLedgerDeptFilter(val){
+  ledgerDeptFilter = val;
+  document.getElementById("reportBody").innerHTML = buildReport();
+}
+function buildStockLedger(){
+  const allDepts = [];
+  DB.locationGroups.forEach(g => (g.departments||[]).forEach(d => allDepts.push(d)));
+
+  const ledgerRows = DB.items.map(item=>{
+    const beginQty = stockAsOfDate(item.id, reportRange.from);
+    const beginAvgCost = avgCostAsOfDate(item.id, reportRange.from);
+    const beginValue = beginQty * beginAvgCost;
+
+    const receiptsRows = DB.incoming.filter(r=>r.itemId===item.id && r.sourceType==="Purchasing" && inRange(r.date));
+    const donationRows = DB.incoming.filter(r=>r.itemId===item.id && r.sourceType==="Donation" && inRange(r.date));
+    const receiptsQty = receiptsRows.reduce((s,r)=>s+Number(r.qty),0);
+    const donationQty = donationRows.reduce((s,r)=>s+Number(r.qty),0);
+    const totalInputQty = receiptsQty + donationQty;
+    const valueOfInput = receiptsRows.reduce((s,r)=>s+Number(r.total||0),0) + donationRows.reduce((s,r)=>s+Number(r.total||0),0);
+    const allInputDates = [...receiptsRows, ...donationRows].map(r=>r.date).sort();
+    const receiptDate = allInputDates.length ? allInputDates[allInputDates.length-1] : "";
+
+    const outputRows = DB.outgoing.filter(r=>r.itemId===item.id && inRange(r.date) && (!ledgerDeptFilter || r.department===ledgerDeptFilter));
+    const scrapRows = ledgerDeptFilter ? [] : DB.scrap.filter(r=>r.itemId===item.id && inRange(r.date));
+    const totalOutputQty = outputRows.reduce((s,r)=>s+Number(r.qty),0) + scrapRows.reduce((s,r)=>s+Number(r.qty),0);
+
+    const denom = beginQty + totalInputQty;
+    const periodAvgCost = denom>0 ? (beginValue+valueOfInput)/denom : beginAvgCost;
+    const valueOfOutput = totalOutputQty * periodAvgCost;
+    const endingQty = beginQty + totalInputQty - totalOutputQty;
+    const endingAvgCost = periodAvgCost;
+    const endingValue = endingQty * endingAvgCost;
+
+    return { item, beginQty, beginValue, receiptsQty, donationQty, totalInputQty, valueOfInput, receiptDate, totalOutputQty, valueOfOutput, endingQty, endingAvgCost, endingValue };
+  }).filter(r => r.beginQty!==0 || r.totalInputQty>0 || r.totalOutputQty>0);
+
+  return `
+    <div class="filter-bar" style="margin-bottom:16px;">
+      <div class="field"><label>Department (affects Output only)</label>
+        <select onchange="setLedgerDeptFilter(this.value)">
+          <option value="">All Departments</option>
+          ${allDepts.map(d=>`<option value="${escHtml(d)}" ${ledgerDeptFilter===d?'selected':''}>${escHtml(d)}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+    ${ledgerRows.length===0 ? emptyState("No stock activity in this date range.") : `
+    <div class="table-wrap"><table><thead><tr>
+      <th>Item</th><th>Department</th><th>Beginning Qty</th><th>Beginning Value</th><th>Receipts</th><th>Donation</th><th>Total Input Qty</th><th>Value of Input</th><th>Receipt Date</th><th>Total Output</th><th>Value of Output</th><th>Ending Qty</th><th>Ending Avg Cost</th><th>Ending Value</th>
+    </tr></thead><tbody>
+      ${ledgerRows.map(r=>`<tr>
+        <td><b>${escHtml(r.item.name)}</b></td>
+        <td>${ledgerDeptFilter?escHtml(ledgerDeptFilter):'All'}</td>
+        <td class="mono">${r.beginQty}</td>
+        <td class="mono">${fmtMoney(r.beginValue)}</td>
+        <td class="mono">${r.receiptsQty}</td>
+        <td class="mono">${r.donationQty}</td>
+        <td class="mono">${r.totalInputQty}</td>
+        <td class="mono">${fmtMoney(r.valueOfInput)}</td>
+        <td>${r.receiptDate?fmtDate(r.receiptDate):'-'}</td>
+        <td class="mono">${r.totalOutputQty}</td>
+        <td class="mono">${fmtMoney(r.valueOfOutput)}</td>
+        <td class="mono"><b>${r.endingQty}</b></td>
+        <td class="mono">${fmtMoney(r.endingAvgCost)}</td>
+        <td class="mono"><b>${fmtMoney(r.endingValue)}</b></td>
+      </tr>`).join("")}
+    </tbody></table></div>`}
+  `;
+}
 function diaperReportData(){
   const diaperItems = DB.items.filter(i=>i.category==="diapers");
   const rows = DB.outgoing.filter(r => inRange(r.date) && diaperItems.some(it=>it.id===r.itemId));
@@ -2574,6 +2922,54 @@ function exportReport(){
     });
     downloadCSV(`dus-store-finance-report-${todayStr()}.csv`, rows);
     toast("Finance report exported");
+    return;
+  }
+  if(reportTab==="stockledger"){
+    rows.push(["Item","Department","Beginning Qty","Beginning Value","Receipts","Donation","Total Input Qty","Value of Input","Receipt Date","Total Output","Value of Output","Ending Qty","Ending Avg Cost","Ending Value"]);
+    DB.items.forEach(item=>{
+      const beginQty = stockAsOfDate(item.id, reportRange.from);
+      const beginAvgCost = avgCostAsOfDate(item.id, reportRange.from);
+      const beginValue = beginQty * beginAvgCost;
+      const receiptsRows = DB.incoming.filter(r=>r.itemId===item.id && r.sourceType==="Purchasing" && inRange(r.date));
+      const donationRows = DB.incoming.filter(r=>r.itemId===item.id && r.sourceType==="Donation" && inRange(r.date));
+      const receiptsQty = receiptsRows.reduce((s,r)=>s+Number(r.qty),0);
+      const donationQty = donationRows.reduce((s,r)=>s+Number(r.qty),0);
+      const totalInputQty = receiptsQty + donationQty;
+      const valueOfInput = receiptsRows.reduce((s,r)=>s+Number(r.total||0),0) + donationRows.reduce((s,r)=>s+Number(r.total||0),0);
+      const allInputDates = [...receiptsRows, ...donationRows].map(r=>r.date).sort();
+      const receiptDate = allInputDates.length ? allInputDates[allInputDates.length-1] : "";
+      const outputRows = DB.outgoing.filter(r=>r.itemId===item.id && inRange(r.date) && (!ledgerDeptFilter || r.department===ledgerDeptFilter));
+      const scrapRows = ledgerDeptFilter ? [] : DB.scrap.filter(r=>r.itemId===item.id && inRange(r.date));
+      const totalOutputQty = outputRows.reduce((s,r)=>s+Number(r.qty),0) + scrapRows.reduce((s,r)=>s+Number(r.qty),0);
+      const denom = beginQty + totalInputQty;
+      const periodAvgCost = denom>0 ? (beginValue+valueOfInput)/denom : beginAvgCost;
+      const valueOfOutput = totalOutputQty * periodAvgCost;
+      const endingQty = beginQty + totalInputQty - totalOutputQty;
+      if(beginQty===0 && totalInputQty===0 && totalOutputQty===0) return;
+      rows.push([item.name, ledgerDeptFilter||"All", beginQty, beginValue.toFixed(2), receiptsQty, donationQty, totalInputQty, valueOfInput.toFixed(2), receiptDate, totalOutputQty, valueOfOutput.toFixed(2), endingQty, periodAvgCost.toFixed(2), (endingQty*periodAvgCost).toFixed(2)]);
+    });
+    downloadCSV(`dus-store-stock-ledger-${todayStr()}.csv`, rows);
+    toast("Stock ledger exported");
+    return;
+  }
+  if(reportTab==="inwardfile"){
+    rows.push(["Date","Item","Category","Source","Vendor/Donor","Qty","Rate","Total","Expiry","Batch","Invoice","Entered By"]);
+    DB.incoming.filter(r=>inRange(r.date)).forEach(r=>{
+      const item = getItem(r.itemId);
+      rows.push([r.date, item?item.name:'', item?CATS[item.category].label:'', r.sourceType, r.donorVendor||'', r.qty, r.rate, r.total, r.expiryDate||'', r.batchNo||'', r.invoiceNo||'', r.enteredBy||'']);
+    });
+    downloadCSV(`dus-store-inward-file-${todayStr()}.csv`, rows);
+    toast("Inward file exported");
+    return;
+  }
+  if(reportTab==="outwardfile"){
+    rows.push(["Date","Item","Category","Qty","Department","Receiver","Purpose","Approved By","Received","Entered By"]);
+    DB.outgoing.filter(r=>inRange(r.date)).forEach(r=>{
+      const item = getItem(r.itemId);
+      rows.push([r.date, item?item.name:'', item?CATS[item.category].label:'', r.qty, r.department, r.receiverName, r.purpose||'', r.approvedBy||'', r.received?'Yes':'Pending', r.enteredBy||'']);
+    });
+    downloadCSV(`dus-store-outward-file-${todayStr()}.csv`, rows);
+    toast("Outward file exported");
     return;
   }
   if(reportTab==="daily"){
