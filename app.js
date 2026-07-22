@@ -3025,7 +3025,6 @@ function exportReport(){
 /* ============================================================
    DEPARTMENTS
    ============================================================ */
-let deptFilter = { q: "" };
 function renderDepartments(){
   const main = document.getElementById("mainContent");
   main.innerHTML = `
