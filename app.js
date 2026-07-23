@@ -47,7 +47,7 @@ function defaultDB(){
       { name:"Rashdabad", departments:[], allowCustom:false },
       { name:"Other", departments:["Christ the King Church","Christ the King School","Rosary Convent","Sangard Convent","Baldia Convent","Digroad Convent"], allowCustom:true }
     ],
-    dormRooms: Array.from({length:12}, (_,i)=>({ id:"room_"+(i+1), name:"Room "+(i+1), caregiver:"" })),
+    dormRooms: Array.from({length:23}, (_,i)=>({ id:"room_"+(i+1), name:"Room "+(i+1), caregiver:"" })),
     items: [],
     incoming: [],
     outgoing: [],
@@ -1907,6 +1907,38 @@ function saveBulkOutward(){
    ticking which rooms need diapers, picking a size, and saving.
    ============================================================ */
 const DIAPER_SIZES = ["JXL","M","XL"];
+function addDormRoom(){
+  const nextNum = DB.dormRooms.length + 1;
+  DB.dormRooms.push({ id: "room_"+Date.now(), name: "Room "+nextNum, caregiver: "" });
+  saveDB(DB);
+  toast(`Room added — total ${DB.dormRooms.length} rooms`);
+  renderDiaperIssue();
+}
+function setDormRoomCount(){
+  const input = prompt(`Current total: ${DB.dormRooms.length} rooms. Enter new total number of rooms:`, DB.dormRooms.length);
+  if(input===null) return;
+  const target = parseInt(input, 10);
+  if(isNaN(target) || target<0){ toast("Please enter a valid number", true); return; }
+  if(target > DB.dormRooms.length){
+    for(let i=DB.dormRooms.length+1; i<=target; i++){
+      DB.dormRooms.push({ id:"room_"+Date.now()+"_"+i, name:"Room "+i, caregiver:"" });
+    }
+  } else if(target < DB.dormRooms.length){
+    const removed = DB.dormRooms.length - target;
+    if(!confirm(`This will remove the last ${removed} room(s) from the list. Continue?`)) return;
+    DB.dormRooms = DB.dormRooms.slice(0, target);
+  }
+  saveDB(DB);
+  toast(`Total rooms set to ${DB.dormRooms.length}`);
+  renderDiaperIssue();
+}
+function removeDormRoom(i){
+  if(!confirm(`Remove "${DB.dormRooms[i].name}"?`)) return;
+  DB.dormRooms.splice(i,1);
+  saveDB(DB);
+  toast("Room removed");
+  renderDiaperIssue();
+}
 let diaperDate = todayStr();
 let diaperTime = new Date().toTimeString().slice(0,5);
 
@@ -1922,7 +1954,7 @@ function findOrCreateDiaperItem(size){
 function renderDiaperIssue(){
   const main = document.getElementById("mainContent");
   main.innerHTML = `
-    ${topbarHtml("Diaper Issue","Quick tick-sheet for the 12 dormitory rooms")}
+    ${topbarHtml("Diaper Issue",`Quick tick-sheet for ${DB.dormRooms.length} dormitory rooms`, isAdmin()?`<button class="btn btn-ghost btn-sm" onclick="setDormRoomCount()">Set Total Rooms</button><button class="btn btn-ghost btn-sm" onclick="addDormRoom()">${ICONS.plus}Add Room</button>`:"")}
     <div class="panel">
       <div class="form-grid" style="margin-bottom:18px;max-width:500px;">
         <div class="field"><label>Date</label><input type="date" id="dp_date" value="${diaperDate}" onchange="diaperDate=this.value"></div>
@@ -1930,7 +1962,7 @@ function renderDiaperIssue(){
       </div>
       <div class="table-wrap">
       <table>
-        <thead><tr><th style="width:40px;">Issue</th><th>Room</th><th>Caregiver Name</th><th>JXL Qty</th><th>M Qty</th><th>XL Qty</th><th>Total</th></tr></thead>
+        <thead><tr><th style="width:40px;">Issue</th><th>Room</th><th>Caregiver Name</th><th>JXL Qty</th><th>M Qty</th><th>XL Qty</th><th>Total</th>${isAdmin()?'<th></th>':''}</tr></thead>
         <tbody>
           ${DB.dormRooms.map((r,i)=>`
             <tr>
@@ -1941,6 +1973,7 @@ function renderDiaperIssue(){
               <td><input type="number" id="dp_qty_M_${i}" value="0" min="0" style="width:60px;padding:6px 8px;" oninput="updateDiaperRowTotal(${i})"></td>
               <td><input type="number" id="dp_qty_XL_${i}" value="0" min="0" style="width:60px;padding:6px 8px;" oninput="updateDiaperRowTotal(${i})"></td>
               <td class="mono" id="dp_total_${i}" style="font-weight:700;color:var(--gold-400);">0</td>
+              ${isAdmin()?`<td><button class="icon-btn" onclick="removeDormRoom(${i})">${ICONS.trash}</button></td>`:''}
             </tr>`).join("")}
         </tbody>
       </table>
